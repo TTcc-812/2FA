@@ -1,1 +1,440 @@
-PLACEHOLDER
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f4f6f8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>2FA</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%231a73e8'/%3E%3Cpath d='M20 34l8 8 16-18' fill='none' stroke='%23fff' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f4f6f8;
+    --card: #ffffff;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --accent: #1a73e8;
+    --accent-soft: #e8f0fe;
+    --ok: #059669;
+    --danger: #dc2626;
+    --shadow: 0 1px 3px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.04);
+    --radius: 14px;
+    --font: "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; min-height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: var(--font);
+  }
+  body {
+    display: flex; justify-content: center;
+    padding: 24px 16px 48px;
+  }
+  .wrap {
+    width: 100%; max-width: 720px;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; margin-bottom: 18px;
+  }
+  header h1 {
+    margin: 0; font-size: 20px; font-weight: 700; letter-spacing: .02em;
+  }
+  header .sub {
+    margin: 4px 0 0; color: var(--muted); font-size: 13px;
+  }
+  .tabs {
+    display: flex; gap: 8px; flex-wrap: wrap;
+  }
+  button, .btn {
+    appearance: none; border: 1px solid var(--border);
+    background: var(--card); color: var(--text);
+    border-radius: 999px; height: 36px; padding: 0 14px;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    font-family: inherit;
+  }
+  button:hover, .btn:hover { border-color: #c7d2fe; background: var(--accent-soft); color: var(--accent); }
+  button.primary {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+  }
+  button.primary:hover { filter: brightness(1.05); color: #fff; background: var(--accent); }
+  button.danger:hover { background: #fef2f2; color: var(--danger); border-color: #fecaca; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 20px;
+  }
+  .field { margin-bottom: 14px; }
+  .field label {
+    display: block; font-size: 12px; font-weight: 700;
+    color: var(--muted); margin-bottom: 6px; letter-spacing: .04em;
+  }
+  input, textarea {
+    width: 100%; border: 1px solid var(--border); border-radius: 10px;
+    padding: 11px 12px; font-size: 14px; font-family: var(--mono);
+    background: #fafbfc; color: var(--text); outline: none;
+  }
+  input:focus, textarea:focus {
+    border-color: var(--accent); box-shadow: 0 0 0 3px rgba(26,115,232,.15);
+    background: #fff;
+  }
+  textarea { resize: vertical; min-height: 72px; line-height: 1.5; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .code-box {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 16px; border-radius: 12px;
+    background: var(--accent-soft); border: 1px solid #d2e3fc;
+    margin: 12px 0;
+  }
+  .code {
+    font-family: var(--mono); font-size: 32px; font-weight: 700;
+    letter-spacing: .12em; color: var(--text);
+  }
+  .timer {
+    font-family: var(--mono); font-size: 13px; color: var(--muted);
+    min-width: 42px; text-align: right;
+  }
+  .bar {
+    height: 4px; background: #e5e7eb; border-radius: 999px; overflow: hidden; margin-top: 10px;
+  }
+  .bar > i {
+    display: block; height: 100%; background: var(--accent); width: 0%;
+    border-radius: inherit; transition: width .2s linear;
+  }
+  .hint { font-size: 12px; color: var(--muted); line-height: 1.6; margin-top: 8px; }
+  .msg { font-size: 13px; margin: 8px 0; color: var(--ok); }
+  .err { color: var(--danger); }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px; margin-top: 14px;
+  }
+  .acct {
+    border: 1px solid var(--border); border-radius: 12px; padding: 14px;
+    background: #fff; cursor: pointer; transition: border-color .15s, box-shadow .15s;
+  }
+  .acct:hover { border-color: #c7d2fe; box-shadow: var(--shadow); }
+  .acct .name {
+    font-size: 13px; font-weight: 700; margin-bottom: 8px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .acct .code {
+    font-size: 24px; letter-spacing: .1em;
+  }
+  .acct .meta {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 8px; font-size: 12px; color: var(--muted); font-family: var(--mono);
+  }
+  .linkbox {
+    font-family: var(--mono); font-size: 12px; word-break: break-all;
+    background: #f8fafc; border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 12px; color: var(--muted);
+  }
+  .hidden { display: none !important; }
+  footer {
+    margin-top: 18px; text-align: center; color: var(--muted); font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>2FA 验证码</h1>
+      <p class="sub">本地计算 · 密钥不会上传</p>
+    </div>
+    <div class="tabs">
+      <button type="button" id="tabSingle" class="primary">单账号</button>
+      <button type="button" id="tabBoard">多账号看板</button>
+    </div>
+  </header>
+
+  <section id="panelSingle" class="card">
+    <div class="field">
+      <label>密钥 / SECRET</label>
+      <textarea id="secret" placeholder="粘贴 Base32 密钥，或 otpauth:// 链接" spellcheck="false"></textarea>
+    </div>
+    <div class="field">
+      <label>账号名称（可选）</label>
+      <input id="label" placeholder="例如 GitHub" spellcheck="false">
+    </div>
+    <div class="row">
+      <button type="button" class="primary" id="btnGen">生成验证码</button>
+      <button type="button" id="btnCopyCode">复制验证码</button>
+      <button type="button" id="btnCopyLink">复制书签链接</button>
+    </div>
+    <div id="singleMsg" class="msg hidden"></div>
+    <div id="singleErr" class="msg err hidden"></div>
+    <div id="singleResult" class="hidden">
+      <div class="code-box">
+        <div class="code" id="code">------</div>
+        <div class="timer" id="timer">30s</div>
+      </div>
+      <div class="bar"><i id="bar"></i></div>
+      <p class="hint">把下面链接收藏成书签，下次打开自动出码：</p>
+      <div class="linkbox" id="bookmark"></div>
+    </div>
+  </section>
+
+  <section id="panelBoard" class="card hidden">
+    <div class="field">
+      <label>批量导入（每行一个密钥或书签链接）</label>
+      <textarea id="bulk" placeholder="每行一个：密钥 或 #secret=xxx&label=名称 或完整链接" spellcheck="false"></textarea>
+    </div>
+    <div class="row">
+      <button type="button" class="primary" id="btnImport">导入到看板</button>
+      <button type="button" id="btnExport">导出链接</button>
+      <button type="button" class="danger" id="btnClear">清空看板</button>
+    </div>
+    <div id="boardMsg" class="msg hidden"></div>
+    <div class="grid" id="grid"></div>
+    <p class="hint">点击卡片可复制验证码。数据只存在本机浏览器，刷新仍在。</p>
+  </section>
+
+  <footer>纯前端 TOTP · 开源逻辑 · 适合测试/临时账号</footer>
+</div>
+
+<script>
+(function () {
+  const A32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+  function b32decode(s) {
+    s = (s || '').replace(/=+$/, '').replace(/\s/g, '').toUpperCase();
+    if (!s || /[^A-Z2-7]/.test(s)) return null;
+    let bits = 0, val = 0; const out = [];
+    for (const ch of s) {
+      const i = A32.indexOf(ch);
+      if (i < 0) return null;
+      val = (val << 5) | i; bits += 5;
+      if (bits >= 8) { out.push((val >>> (bits - 8)) & 255); bits -= 8; }
+    }
+    return out.length ? new Uint8Array(out) : null;
+  }
+
+  async function totp(secret, digits = 6, period = 30) {
+    const key = b32decode(secret);
+    if (!key) throw new Error('invalid secret');
+    const counter = Math.floor(Date.now() / 1000 / period);
+    const buf = new ArrayBuffer(8);
+    const dv = new DataView(buf);
+    dv.setUint32(0, Math.floor(counter / 0x100000000));
+    dv.setUint32(4, counter >>> 0);
+    const ck = await crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+    const sig = new Uint8Array(await crypto.subtle.sign('HMAC', ck, buf));
+    const off = sig[sig.length - 1] & 0x0f;
+    const bin = ((sig[off] & 0x7f) << 24) | ((sig[off + 1] & 0xff) << 16) | ((sig[off + 2] & 0xff) << 8) | (sig[off + 3] & 0xff);
+    return String(bin % 10 ** digits).padStart(digits, '0');
+  }
+
+  function parseSecretInput(raw) {
+    raw = (raw || '').trim();
+    if (!raw) return null;
+    let secret = '', label = '';
+    if (/^otpauth:\/\//i.test(raw)) {
+      try {
+        const u = new URL(raw);
+        secret = (u.searchParams.get('secret') || '').trim();
+        let path = decodeURIComponent(u.pathname.replace(/^\/+/, ''));
+        if (path.includes(':')) label = path.split(':').slice(1).join(':').trim();
+        else label = path;
+      } catch (e) { return null; }
+    } else if (raw.includes('secret=')) {
+      const q = raw.includes('#') ? raw.slice(raw.indexOf('#') + 1) : raw.replace(/^\?/, '');
+      const sp = new URLSearchParams(q);
+      secret = (sp.get('secret') || '').trim();
+      label = sp.get('label') || '';
+    } else {
+      secret = raw.replace(/\s/g, '');
+    }
+    if (!b32decode(secret)) return null;
+    return { secret: secret.toUpperCase().replace(/\s/g, ''), label: label || '' };
+  }
+
+  function bookmarkUrl(acc) {
+    const sp = new URLSearchParams();
+    sp.set('secret', acc.secret);
+    if (acc.label) sp.set('label', acc.label);
+    return location.origin + location.pathname + '#' + sp.toString();
+  }
+
+  function copyText(t) {
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(t);
+    const ta = document.createElement('textarea');
+    ta.value = t; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); ta.remove();
+    return Promise.resolve();
+  }
+
+  function show(el, text, isErr) {
+    el.textContent = text || '';
+    el.classList.toggle('hidden', !text);
+    el.classList.toggle('err', !!isErr);
+  }
+
+  let current = null;
+  let accounts = [];
+  try {
+    accounts = JSON.parse(localStorage.getItem('simple2fa.board') || '[]') || [];
+  } catch (e) { accounts = []; }
+
+  const $ = (id) => document.getElementById(id);
+  const panelSingle = $('panelSingle');
+  const panelBoard = $('panelBoard');
+
+  function saveBoard() {
+    try { localStorage.setItem('simple2fa.board', JSON.stringify(accounts)); } catch (e) {}
+  }
+
+  function switchTab(board) {
+    panelSingle.classList.toggle('hidden', board);
+    panelBoard.classList.toggle('hidden', !board);
+    $('tabSingle').classList.toggle('primary', !board);
+    $('tabBoard').classList.toggle('primary', board);
+    if (board) renderBoard();
+  }
+
+  $('tabSingle').onclick = () => switchTab(false);
+  $('tabBoard').onclick = () => switchTab(true);
+
+  async function refreshSingle() {
+    if (!current) return;
+    try {
+      const code = await totp(current.secret);
+      const period = 30;
+      const left = Math.max(1, period - (Math.floor(Date.now() / 1000) % period));
+      $('code').textContent = code.slice(0, 3) + ' ' + code.slice(3);
+      $('timer').textContent = left + 's';
+      $('bar').style.width = (left / period * 100) + '%';
+      current._code = code;
+    } catch (e) {
+      show($('singleErr'), '密钥无效', true);
+    }
+  }
+
+  function setSingle(acc) {
+    current = acc;
+    $('secret').value = acc.secret;
+    $('label').value = acc.label || '';
+    $('singleResult').classList.remove('hidden');
+    $('bookmark').textContent = bookmarkUrl(acc);
+    show($('singleErr'), '');
+    show($('singleMsg'), '');
+    refreshSingle();
+    try {
+      history.replaceState(null, '', bookmarkUrl(acc));
+    } catch (e) {}
+  }
+
+  $('btnGen').onclick = () => {
+    const acc = parseSecretInput($('secret').value);
+    if (!acc) {
+      show($('singleErr'), '密钥无效：请使用 Base32（A–Z / 2–7）', true);
+      $('singleResult').classList.add('hidden');
+      current = null;
+      return;
+    }
+    acc.label = ($('label').value || acc.label || '').trim();
+    setSingle(acc);
+  };
+
+  $('btnCopyCode').onclick = async () => {
+    if (!current || !current._code) return;
+    await copyText(current._code);
+    show($('singleMsg'), '验证码已复制');
+  };
+
+  $('btnCopyLink').onclick = async () => {
+    if (!current) return;
+    await copyText(bookmarkUrl(current));
+    show($('singleMsg'), '书签链接已复制（含密钥，请妥善保存）');
+  };
+
+  async function renderBoard() {
+    const grid = $('grid');
+    grid.innerHTML = '';
+    if (!accounts.length) {
+      grid.innerHTML = '<div class="hint">还没有账号。在上方粘贴密钥后点「导入到看板」。</div>';
+      return;
+    }
+    for (let i = 0; i < accounts.length; i++) {
+      const a = accounts[i];
+      const card = document.createElement('div');
+      card.className = 'acct';
+      card.innerHTML = '<div class="name"></div><div class="code">······</div><div class="meta"><span class="t"></span><span class="rm">删除</span></div><div class="bar"><i></i></div>';
+      card.querySelector('.name').textContent = a.label || ('账号 ' + (i + 1));
+      card.querySelector('.rm').onclick = (e) => {
+        e.stopPropagation();
+        accounts.splice(i, 1); saveBoard(); renderBoard();
+      };
+      card.onclick = async () => {
+        try {
+          const code = await totp(a.secret);
+          await copyText(code);
+          show($('boardMsg'), '已复制 ' + (a.label || '验证码'));
+        } catch (e) {}
+      };
+      grid.appendChild(card);
+      (async () => {
+        try {
+          const code = await totp(a.secret);
+          const period = 30;
+          const left = Math.max(1, period - (Math.floor(Date.now() / 1000) % period));
+          card.querySelector('.code').textContent = code.slice(0, 3) + ' ' + code.slice(3);
+          card.querySelector('.t').textContent = left + 's';
+          card.querySelector('i').style.width = (left / period * 100) + '%';
+        } catch (e) {
+          card.querySelector('.code').textContent = '无效';
+        }
+      })();
+    }
+  }
+
+  $('btnImport').onclick = () => {
+    const lines = ($('bulk').value || '').split(/\r?\n/);
+    let n = 0;
+    for (const line of lines) {
+      const acc = parseSecretInput(line);
+      if (!acc) continue;
+      if (accounts.some(x => x.secret === acc.secret && x.label === acc.label)) continue;
+      accounts.push(acc); n++;
+    }
+    saveBoard();
+    renderBoard();
+    show($('boardMsg'), n ? ('已导入 ' + n + ' 个账号') : '没有识别到新账号');
+  };
+
+  $('btnExport').onclick = async () => {
+    const text = accounts.map(bookmarkUrl).join('\n');
+    await copyText(text || '');
+    show($('boardMsg'), accounts.length ? '已复制全部书签链接' : '看板为空');
+  };
+
+  $('btnClear').onclick = () => {
+    accounts = []; saveBoard(); renderBoard();
+    show($('boardMsg'), '已清空');
+  };
+
+  (function loadHash() {
+    const raw = (location.hash || '').replace(/^#/, '');
+    if (!raw) return;
+    const acc = parseSecretInput(raw.includes('secret=') ? raw : ('secret=' + raw));
+    if (acc) {
+      if (!acc.label) {
+        const sp = new URLSearchParams(raw);
+        acc.label = sp.get('label') || '';
+      }
+      setSingle(acc);
+    }
+  })();
+
+  setInterval(() => {
+    if (current && !panelSingle.classList.contains('hidden')) refreshSingle();
+    if (!panelBoard.classList.contains('hidden')) renderBoard();
+  }, 1000);
+})();
+</script>
+</body>
+</html>
