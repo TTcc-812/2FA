@@ -1,1 +1,132 @@
-PLACEHOLDER_WILL_FAIL
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f4f6f8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>2FA</title>
+<script src="./vendor/qrcode.js" defer></script>
+<link rel="stylesheet" href="./style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%231a73e8'/%3E%3Cpath d='M20 34l8 8 16-18' fill='none' stroke='%23fff' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>2FA 验证码</h1>
+      <p class="sub">本地计算 · 密钥不会上传</p>
+    </div>
+    <div class="tabs">
+      <button type="button" id="tabSingle" class="primary">单账号</button>
+      <button type="button" id="tabBoard">多账号看板</button>
+    </div>
+  </header>
+
+  <section id="panelSingle" class="card">
+    <div class="field">
+      <label>密钥 / SECRET</label>
+      <textarea id="secret" placeholder="粘贴 Base32 密钥，或 otpauth:// 链接" spellcheck="false"></textarea>
+    </div>
+    <div class="field">
+      <label>账号名称（可选）</label>
+      <input id="label" placeholder="例如 GitHub" spellcheck="false">
+    </div>
+    <div class="row">
+      <button type="button" class="primary" id="btnGen">生成验证码</button>
+      <button type="button" id="btnCopyCode">复制验证码</button>
+      <button type="button" id="btnCopyLink">复制书签链接</button>
+      <button type="button" id="btnAddToBoard">加入看板</button>
+      <button type="button" id="btnShowQr">显示二维码</button>
+    </div>
+    <div id="singleMsg" class="msg hidden"></div>
+    <div id="singleErr" class="msg err hidden"></div>
+    <div id="singleResult" class="hidden">
+      <div class="code-box">
+        <div class="code" id="code">------</div>
+        <div class="timer" id="timer">30s</div>
+      </div>
+      <div class="bar"><i id="bar"></i></div>
+      <p class="hint">把下面链接收藏成书签，下次打开自动出码：</p>
+      <div class="linkbox" id="bookmark"></div>
+      <div id="qrWrap" class="qr-box hidden">
+        <img id="qrImg" alt="otpauth QR">
+        <div class="qr-tip">可用 Authenticator 等 App 扫码导入（二维码含密钥，勿公开分享）</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="panelBoard" class="card hidden">
+    <div class="block">
+      <div class="section-title">添加账号</div>
+      <div class="row-2">
+        <div class="field" style="margin-bottom:10px">
+          <label>账号名称</label>
+          <input id="addLabel" placeholder="例如 GitHub" spellcheck="false">
+        </div>
+        <div class="field" style="margin-bottom:10px">
+          <label>密钥 / SECRET</label>
+          <input id="addSecret" placeholder="Base32 密钥" spellcheck="false" autocomplete="off">
+        </div>
+      </div>
+      <div class="row">
+        <button type="button" class="primary" id="btnAddOne">添加</button>
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="section-title">批量导入（可选）</div>
+      <div class="field" style="margin-bottom:10px">
+        <label>每行一个密钥或链接</label>
+        <textarea id="bulk" placeholder="每行一个：密钥 或 #secret=xxx&label=名称 或完整链接" spellcheck="false"></textarea>
+      </div>
+      <div class="row">
+        <button type="button" id="btnImport">批量导入</button>
+        <button type="button" id="btnExport">导出全部链接</button>
+        <button type="button" class="danger" id="btnClear">清空看板</button>
+      </div>
+    </div>
+
+    <div id="boardMsg" class="msg hidden"></div>
+    <div class="section-title">账号列表</div>
+    <div class="grid" id="grid"></div>
+    <p class="hint">点击验证码可复制。点「编辑」可改密钥（名称可保持不变）。数据只存在本机浏览器。</p>
+  </section>
+
+  <footer>纯前端 TOTP · 适合测试/临时账号</footer>
+</div>
+
+<div id="qrMask" class="mask hidden">
+  <div class="dialog qr-dialog">
+    <h3 id="qrTitle">二维码</h3>
+    <img id="qrDialogImg" alt="otpauth QR">
+    <p class="hint">扫码可导入到 Authenticator 等 App</p>
+    <div class="actions" style="justify-content:center">
+      <button type="button" id="btnQrClose">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div id="editMask" class="mask hidden">
+  <div class="dialog">
+    <h3>编辑账号</h3>
+    <div class="field">
+      <label>账号名称</label>
+      <input id="editLabel" placeholder="账号名称" spellcheck="false">
+    </div>
+    <div class="field">
+      <label>密钥 / SECRET（可单独修改）</label>
+      <input id="editSecret" placeholder="新的 Base32 密钥" spellcheck="false" autocomplete="off">
+    </div>
+    <div id="editErr" class="msg err hidden"></div>
+    <div class="actions">
+      <button type="button" id="btnEditCancel">取消</button>
+      <button type="button" class="primary" id="btnEditSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<script src="./app.js"></script>
+</body>
+</html>
