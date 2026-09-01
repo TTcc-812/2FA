@@ -50,6 +50,11 @@
       <div class="bar"><i id="bar"></i></div>
       <p class="hint">把下面链接收藏成书签，下次打开自动出码：</p>
       <div class="linkbox" id="bookmark"></div>
+      <p class="hint" style="margin-top:14px">otpauth 格式（Authenticator 手动导入 / 扫码用的完整链接）：</p>
+      <div class="linkbox" id="otpauth" style="word-break:break-all;font-size:13px"></div>
+      <div class="row" style="margin-top:8px">
+        <button type="button" id="btnCopyOtpauth">复制 otpauth 链接</button>
+      </div>
       <div id="qrWrap" class="qr-box hidden">
         <img id="qrImg" alt="otpauth QR">
         <div class="qr-tip">可用 Authenticator 等 App 扫码导入（二维码含密钥，勿公开分享）</div>
@@ -101,6 +106,7 @@
   <div class="dialog qr-dialog">
     <h3 id="qrTitle">二维码</h3>
     <img id="qrDialogImg" alt="otpauth QR">
+    <p class="hint" id="qrOtpauth" style="word-break:break-all;font-size:13px;text-align:left"></p>
     <p class="hint">扫码可导入到 Authenticator 等 App</p>
     <div class="actions" style="justify-content:center">
       <button type="button" id="btnQrClose">关闭</button>

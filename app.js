@@ -141,6 +141,7 @@
     $('label').value = acc.label || '';
     $('singleResult').classList.remove('hidden');
     $('bookmark').textContent = bookmarkUrl(acc);
+    $('otpauth').textContent = otpauthUrl(acc);
     show($('singleErr'), '');
     show($('singleMsg'), '');
     $('qrWrap').classList.add('hidden');
@@ -172,6 +173,12 @@
     if (!current) return;
     await copyText(bookmarkUrl(current));
     show($('singleMsg'), '书签链接已复制（含密钥，请妥善保存）');
+  };
+
+  $('btnCopyOtpauth').onclick = async () => {
+    if (!current) return;
+    await copyText(otpauthUrl(current));
+    show($('singleMsg'), 'otpauth 链接已复制（可粘贴到 Authenticator 手动添加）');
   };
 
   $('btnShowQr').onclick = () => {
@@ -308,6 +315,7 @@
         if (!data) { show($('boardMsg'), '二维码生成失败', true); return; }
         $('qrTitle').textContent = (a.label || '账号') + ' · 二维码';
         $('qrDialogImg').src = data;
+        $('qrOtpauth').textContent = url;
         $('qrMask').classList.remove('hidden');
       };
       card.querySelector('.btn-del').onclick = (e) => {
