@@ -103,6 +103,18 @@
   try { groups = JSON.parse(localStorage.getItem('simple2fa.groups') || '[]'); } catch (_) {}
   if (!Array.isArray(groups)) groups = [];
   groups = groups.filter(g => g && typeof g.id === 'string' && typeof g.name === 'string');
+  // One-time default groups. Existing user groups and later deletions are respected.
+  if (localStorage.getItem('simple2fa.defaultGroupsV1') !== '1') {
+    for (const name of ['ejhcard', 'xf', 'jt']) {
+      if (!groups.some(g => g.name.toLowerCase() === name)) {
+        groups.push({id: 'default-' + name, name});
+      }
+    }
+    try {
+      localStorage.setItem('simple2fa.groups', JSON.stringify(groups));
+      localStorage.setItem('simple2fa.defaultGroupsV1', '1');
+    } catch (_) {}
+  }
   let boardView = localStorage.getItem('simple2fa.view') === 'grouped' ? 'grouped' : 'plain';
   const saveGroups = () => localStorage.setItem('simple2fa.groups', JSON.stringify(groups));
   function fillGroups(select, selected) {
