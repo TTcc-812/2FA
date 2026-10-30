@@ -127,7 +127,6 @@
     groups.push({id: 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2,7), name});
     saveGroups(); $('newGroupName').value = ''; renderBoard();
   };
-  updateViewControls();
   try {
     accounts = JSON.parse(localStorage.getItem('simple2fa.board') || '[]') || [];
   } catch (e) { accounts = []; }
@@ -135,6 +134,7 @@
   const $ = (id) => document.getElementById(id);
   const panelSingle = $('panelSingle');
   const panelBoard = $('panelBoard');
+  updateViewControls();
 
   function saveBoard() {
     try { localStorage.setItem('simple2fa.board', JSON.stringify(accounts)); } catch (e) {}
@@ -379,7 +379,7 @@
     boardRenderVersion++;
     const grid = $('grid');
     grid.innerHTML = '';
-    if (!accounts.length) {
+    if (!accounts.length && boardView === 'plain') {
       grid.innerHTML = '<div class="hint">还没有账号。用上方「添加账号」直接填名称和密钥即可。</div>';
       return;
     }
