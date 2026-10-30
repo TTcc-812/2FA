@@ -130,6 +130,9 @@
     $('btnGroupView').classList.toggle('primary', boardView === 'grouped');
     $('groupTools').classList.toggle('hidden', boardView !== 'grouped');
     $('addGroupField').classList.toggle('hidden', boardView !== 'grouped');
+    document.querySelector('.wrap').classList.toggle(
+      'group-wide', boardView === 'grouped' && !$('panelBoard').classList.contains('hidden')
+    );
   }
   $('btnPlainView').onclick = () => { boardView = 'plain'; localStorage.setItem('simple2fa.view', boardView); updateViewControls(); renderBoard(); };
   $('btnGroupView').onclick = () => { boardView = 'grouped'; localStorage.setItem('simple2fa.view', boardView); updateViewControls(); renderBoard(); };
@@ -158,6 +161,7 @@
     panelBoard.classList.toggle('hidden', !board);
     $('tabSingle').classList.toggle('primary', !board);
     $('tabBoard').classList.toggle('primary', board);
+    updateViewControls();
     if (board) renderBoard();
   }
 
