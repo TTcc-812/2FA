@@ -156,3 +156,16 @@
   .dialog.qr-dialog img {
     width: 200px; height: 200px; image-rendering: pixelated; margin: 8px auto; display: block;
   }
+
+.board-heading{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:12px}
+#groupTools{margin:10px 0 18px;align-items:center;flex-wrap:wrap}
+#newGroupName{max-width:240px}
+#addGroupField select,#editGroup{padding:8px;border:1px solid #cbd5e1;border-radius:8px;background:var(--card,#fff);color:var(--text)}
+#grid.grouped-board{display:block}
+.account-group{margin:0 0 24px}
+.group-heading{display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-bottom:1px solid #dbe2ea;padding:8px 0;margin-bottom:12px}
+.group-heading h3{margin:0;font-size:17px}
+.group-count{font-size:12px;opacity:.65;margin-right:auto}
+.group-cards{min-height:64px}
+.acct[draggable="true"]{cursor:grab}
+.acct.dragging{opacity:.4}
