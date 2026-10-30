@@ -93,6 +93,8 @@
     el.classList.toggle('err', !!isErr);
   }
 
+  const $ = (id) => document.getElementById(id);
+
   let current = null;
   let accounts = [];
   let editIndex = -1;
@@ -131,7 +133,6 @@
     accounts = JSON.parse(localStorage.getItem('simple2fa.board') || '[]') || [];
   } catch (e) { accounts = []; }
 
-  const $ = (id) => document.getElementById(id);
   const panelSingle = $('panelSingle');
   const panelBoard = $('panelBoard');
   updateViewControls();
