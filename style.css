@@ -178,3 +178,8 @@
 .wrap.group-wide { max-width: 1440px; width: 100%; }
 .wrap.group-wide #panelBoard { width: 100%; }
 .wrap.group-wide .group-cards { grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); }
+
+/* Collapsible account group headings */
+.group-toggle{width:30px;height:30px;padding:0;border-radius:8px;font-size:20px;flex-shrink:0}
+.group-heading h3{cursor:pointer;outline-offset:3px}
+.group-heading h3:focus-visible{outline:2px solid var(--accent);border-radius:4px}
