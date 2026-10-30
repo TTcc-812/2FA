@@ -83,8 +83,8 @@
     if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(t);
     const ta = document.createElement('textarea');
     ta.value = t; document.body.appendChild(ta); ta.select();
-    document.execCommand('copy'); ta.remove();
-    return Promise.resolve();
+    const ok = document.execCommand('copy'); ta.remove();
+    return ok ? Promise.resolve() : Promise.reject(new Error('浏览器未允许复制'));
   }
 
   function show(el, text, isErr) {
@@ -284,7 +284,35 @@
     renderBoard();
   };
 
+  let boardRenderVersion = 0;
+  async function refreshBoardCodes() {
+    const version = boardRenderVersion;
+    const cards = Array.from($('grid').querySelectorAll('.acct'));
+    const period = 30;
+    const left = Math.max(1, period - (Math.floor(Date.now() / 1000) % period));
+    await Promise.all(cards.map(async (card, i) => {
+      const a = accounts[i];
+      if (!a) return;
+      const codeEl = card.querySelector('.code');
+      try {
+        const code = await totp(a.secret);
+        if (version !== boardRenderVersion || !card.isConnected || accounts[i] !== a) return;
+        codeEl.dataset.code = code;
+        codeEl.textContent = code.slice(0, 3) + ' ' + code.slice(3);
+      } catch (e) {
+        if (version !== boardRenderVersion || !card.isConnected) return;
+        delete codeEl.dataset.code;
+        codeEl.textContent = '无效';
+      }
+      if (version === boardRenderVersion && card.isConnected) {
+        card.querySelector('.t').textContent = left + 's';
+        card.querySelector('i').style.width = (left / period * 100) + '%';
+      }
+    }));
+  }
+
   async function renderBoard() {
+    boardRenderVersion++;
     const grid = $('grid');
     grid.innerHTML = '';
     if (!accounts.length) {
@@ -326,28 +354,23 @@
         show($('boardMsg'), '已删除');
       };
       const codeEl = card.querySelector('.code');
-      codeEl.onclick = async (e) => {
+      codeEl.onclick = (e) => {
         e.stopPropagation();
-        try {
-          const code = await totp(a.secret);
-          await copyText(code);
-          show($('boardMsg'), '已复制 ' + (a.label || '验证码'));
-        } catch (err) {}
+        // Clipboard write must start in the user's click event, before any await.
+        const code = codeEl.dataset.code;
+        if (!code || !/^\d{6}$/.test(code)) {
+          show($('boardMsg'), '验证码尚未生成，请稍后重试', true);
+          return;
+        }
+        copyText(code).then(() => {
+          show($('boardMsg'), '已复制 ' + (a.label || '验证码') + '（完整6位）');
+        }).catch(() => {
+          show($('boardMsg'), '复制失败，请检查浏览器剪贴板权限或使用 HTTPS', true);
+        });
       };
       grid.appendChild(card);
-      (async () => {
-        try {
-          const code = await totp(a.secret);
-          const period = 30;
-          const left = Math.max(1, period - (Math.floor(Date.now() / 1000) % period));
-          codeEl.textContent = code.slice(0, 3) + ' ' + code.slice(3);
-          card.querySelector('.t').textContent = left + 's';
-          card.querySelector('i').style.width = (left / period * 100) + '%';
-        } catch (e) {
-          codeEl.textContent = '无效';
-        }
-      })();
     }
+    refreshBoardCodes();
   }
 
   $('btnImport').onclick = () => {
@@ -392,6 +415,6 @@
 
   setInterval(() => {
     if (current && !panelSingle.classList.contains('hidden')) refreshSingle();
-    if (!panelBoard.classList.contains('hidden')) renderBoard();
+    if (!panelBoard.classList.contains('hidden')) refreshBoardCodes();
   }, 1000);
 })();
