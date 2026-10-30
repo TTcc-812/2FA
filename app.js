@@ -123,7 +123,9 @@
   async function refreshSingle() {
     if (!current) return;
     try {
-      const code = await totp(current.secret);
+      const account = current;
+      const code = await totp(account.secret);
+      if (current !== account) return;
       const period = 30;
       const left = Math.max(1, period - (Math.floor(Date.now() / 1000) % period));
       $('code').textContent = code.slice(0, 3) + ' ' + code.slice(3);
@@ -137,6 +139,7 @@
 
   function setSingle(acc) {
     current = acc;
+    $('code').textContent = '······';
     $('secret').value = acc.secret;
     $('label').value = acc.label || '';
     $('singleResult').classList.remove('hidden');
@@ -151,6 +154,15 @@
     try { history.replaceState(null, '', bookmarkUrl(acc)); } catch (e) {}
   }
 
+  // Clear an inherited label when the user switches to another secret.
+  // A label explicitly edited by the user is left alone.
+  $('secret').addEventListener('input', () => {
+    if (current && $('secret').value.trim() !== current.secret &&
+        $('label').value === (current.label || '')) {
+      $('label').value = '';
+    }
+  });
+
   $('btnGen').onclick = () => {
     const acc = parseSecretInput($('secret').value);
     if (!acc) {
@@ -159,14 +171,30 @@
       current = null;
       return;
     }
-    acc.label = ($('label').value || acc.label || '').trim();
+    acc.label = (acc.label || $('label').value || '').trim();
     setSingle(acc);
   };
 
-  $('btnCopyCode').onclick = async () => {
-    if (!current || !current._code) return;
-    await copyText(current._code);
-    show($('singleMsg'), '验证码已复制');
+  function copySingleCode() {
+    const code = current && current._code;
+    if (!code || !/^\d{6}$/.test(code)) {
+      show($('singleMsg'), '验证码尚未生成，请稍后重试', true);
+      return;
+    }
+    copyText(code).then(() => {
+      show($('singleMsg'), '验证码已复制（完整6位）');
+    }).catch(() => {
+      show($('singleMsg'), '复制失败，请检查浏览器剪贴板权限或使用 HTTPS', true);
+    });
+  }
+
+  $('btnCopyCode').onclick = copySingleCode;
+  $('code').onclick = copySingleCode;
+  $('code').onkeydown = (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      copySingleCode();
+    }
   };
 
   $('btnCopyLink').onclick = async () => {
