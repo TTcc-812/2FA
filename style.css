@@ -175,9 +175,6 @@
 .group-cards:empty{border:1px dashed #9ca3af;border-radius:10px;min-height:72px}
 
 /* Expanded workspace only when the grouped board is visible. */
-.wrap.group-wide { max-width: none; width: 100%; }
+.wrap.group-wide { max-width: 1440px; width: 100%; }
 .wrap.group-wide #panelBoard { width: 100%; }
 .wrap.group-wide .group-cards { grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); }
-@media (min-width: 1100px) {
-  .wrap.group-wide { max-width: none; }
-}
