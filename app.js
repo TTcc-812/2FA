@@ -116,6 +116,12 @@
     } catch (_) {}
   }
   let boardView = localStorage.getItem('simple2fa.view') === 'grouped' ? 'grouped' : 'plain';
+  let collapsedGroups = {};
+  try { collapsedGroups = JSON.parse(localStorage.getItem('simple2fa.collapsedGroups') || '{}') || {}; } catch (_) {}
+  if (typeof collapsedGroups !== 'object' || Array.isArray(collapsedGroups)) collapsedGroups = {};
+  function saveCollapsedGroups() {
+    try { localStorage.setItem('simple2fa.collapsedGroups', JSON.stringify(collapsedGroups)); } catch (_) {}
+  }
   const saveGroups = () => localStorage.setItem('simple2fa.groups', JSON.stringify(groups));
   function fillGroups(select, selected) {
     select.replaceChildren();
@@ -410,9 +416,31 @@
         block.className = 'account-group';
         const heading = document.createElement('div');
         heading.className = 'group-heading';
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'group-toggle';
+        toggle.textContent = collapsedGroups[section.id] ? '▸' : '▾';
+        toggle.setAttribute('aria-expanded', String(!collapsedGroups[section.id]));
+        toggle.setAttribute('aria-label', (collapsedGroups[section.id] ? '展开' : '折叠') + section.name);
+        heading.appendChild(toggle);
         const title = document.createElement('h3');
         title.textContent = section.name;
         heading.appendChild(title);
+        const toggleGroup = () => {
+          collapsedGroups[section.id] = !collapsedGroups[section.id];
+          saveCollapsedGroups();
+          target.classList.toggle('hidden', !!collapsedGroups[section.id]);
+          toggle.textContent = collapsedGroups[section.id] ? '▸' : '▾';
+          toggle.setAttribute('aria-expanded', String(!collapsedGroups[section.id]));
+          toggle.setAttribute('aria-label', (collapsedGroups[section.id] ? '展开' : '折叠') + section.name);
+        };
+        toggle.onclick = toggleGroup;
+        title.onclick = toggleGroup;
+        title.tabIndex = 0;
+        title.setAttribute('role', 'button');
+        title.onkeydown = e => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleGroup(); }
+        };
         const count = document.createElement('span');
         count.className = 'group-count';
         count.textContent = accounts.filter(a => (a.groupId || '') === section.id).length + ' 个账号';
@@ -444,6 +472,7 @@
         block.appendChild(heading);
         target = document.createElement('div');
         target.className = 'grid group-cards';
+        target.classList.toggle('hidden', !!collapsedGroups[section.id]);
         block.appendChild(target); grid.appendChild(block);
         // Move by account identity, not by a stale array position.
         function clearDropMarker() {
