@@ -429,18 +429,52 @@
         target = document.createElement('div');
         target.className = 'grid group-cards';
         block.appendChild(target); grid.appendChild(block);
-        target.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
+        // Move by account identity, not by a stale array position.
+        function clearDropMarker() {
+          target.querySelectorAll('.drop-before,.drop-after').forEach(el =>
+            el.classList.remove('drop-before', 'drop-after'));
+        }
+        target.addEventListener('dragover', e => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          clearDropMarker();
+          const card = e.target.closest('.acct');
+          if (card && target.contains(card)) {
+            const rect = card.getBoundingClientRect();
+            card.classList.add(e.clientX >= rect.left + rect.width / 2 ? 'drop-after' : 'drop-before');
+          }
+        });
+        target.addEventListener('dragleave', e => {
+          if (!target.contains(e.relatedTarget)) clearDropMarker();
+        });
         target.addEventListener('drop', e => {
           e.preventDefault();
-          const from = Number(e.dataTransfer.getData('text/plain'));
-          if (!Number.isInteger(from) || from < 0 || from >= accounts.length) return;
-          const destCard = e.target.closest('.acct');
-          const to = destCard && target.contains(destCard) ? Number(destCard.dataset.index) : -1;
-          const [moving] = accounts.splice(from, 1);
+          const sourceIndex = Number(e.dataTransfer.getData('text/plain'));
+          if (!Number.isInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= accounts.length) return;
+          const moving = accounts[sourceIndex];
+          const card = e.target.closest('.acct');
+          const targetIndex = card && target.contains(card) ? Number(card.dataset.index) : -1;
+          const anchor = targetIndex >= 0 ? accounts[targetIndex] : null;
+          const after = card ? card.classList.contains('drop-after') : true;
+          clearDropMarker();
+          if (anchor === moving) return;
+          accounts.splice(sourceIndex, 1);
           moving.groupId = section.id;
-          const insertAt = to < 0 ? accounts.length : to - (from < to ? 1 : 0);
-          accounts.splice(insertAt, 0, moving);
-          saveBoard(); renderBoard();
+          let insertion;
+          if (anchor) {
+            insertion = accounts.indexOf(anchor) + (after ? 1 : 0);
+          } else {
+            // Append to the end of this group, not the whole board.
+            let last = -1;
+            for (let i = 0; i < accounts.length; i++) {
+              if ((accounts[i].groupId || '') === section.id) last = i;
+            }
+            insertion = last + 1;
+            if (last < 0) insertion = accounts.length;
+          }
+          accounts.splice(insertion, 0, moving);
+          saveBoard();
+          renderBoard();
         });
       }
       targets.set(section.id, target);
