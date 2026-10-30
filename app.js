@@ -285,8 +285,10 @@
   };
 
   let boardRenderVersion = 0;
+  let boardRefreshVersion = 0;
   async function refreshBoardCodes() {
     const version = boardRenderVersion;
+    const refresh = ++boardRefreshVersion;
     const cards = Array.from($('grid').querySelectorAll('.acct'));
     const period = 30;
     const left = Math.max(1, period - (Math.floor(Date.now() / 1000) % period));
@@ -296,15 +298,15 @@
       const codeEl = card.querySelector('.code');
       try {
         const code = await totp(a.secret);
-        if (version !== boardRenderVersion || !card.isConnected || accounts[i] !== a) return;
+        if ((version !== boardRenderVersion || refresh !== boardRefreshVersion) || !card.isConnected || accounts[i] !== a) return;
         codeEl.dataset.code = code;
         codeEl.textContent = code.slice(0, 3) + ' ' + code.slice(3);
       } catch (e) {
-        if (version !== boardRenderVersion || !card.isConnected) return;
+        if ((version !== boardRenderVersion || refresh !== boardRefreshVersion) || !card.isConnected) return;
         delete codeEl.dataset.code;
         codeEl.textContent = '无效';
       }
-      if (version === boardRenderVersion && card.isConnected) {
+      if (version === boardRenderVersion && refresh === boardRefreshVersion && card.isConnected) {
         card.querySelector('.t').textContent = left + 's';
         card.querySelector('i').style.width = (left / period * 100) + '%';
       }
