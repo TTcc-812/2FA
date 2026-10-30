@@ -76,7 +76,7 @@
         </div>
       </div>
       <div class="row">
-        <button type="button" class="primary" id="btnAddOne">添加</button>
+        <button type="button" class="primary" id="btnAddOne">添加</button><span id="addGroupField" class="hidden"><label for="addGroup">所属分组</label> <select id="addGroup"></select></span>
       </div>
     </div>
 
@@ -94,7 +94,8 @@
     </div>
 
     <div id="boardMsg" class="msg hidden"></div>
-    <div class="section-title">账号列表</div>
+    <div class="board-heading"><div class="section-title">账号列表</div><div class="row"><button type="button" id="btnPlainView">普通列表</button><button type="button" id="btnGroupView">分组视图</button></div></div>
+    <div id="groupTools" class="row hidden"><input id="newGroupName" placeholder="新分组标题，例如 工作账号" aria-label="新分组标题"><button type="button" id="btnAddGroup">添加分组</button><span class="hint">拖动账户卡片可排序、跨分组移动</span></div>
     <div class="grid" id="grid"></div>
     <p class="hint">点击验证码可复制。点「编辑」可改密钥（名称可保持不变）。数据只存在本机浏览器。</p>
   </section>
@@ -125,7 +126,7 @@
       <label>密钥 / SECRET（可单独修改）</label>
       <input id="editSecret" placeholder="新的 Base32 密钥" spellcheck="false" autocomplete="off">
     </div>
-    <div id="editErr" class="msg err hidden"></div>
+    <div class="field"><label for="editGroup">所属分组</label><select id="editGroup"></select></div><div id="editErr" class="msg err hidden"></div>
     <div class="actions">
       <button type="button" id="btnEditCancel">取消</button>
       <button type="button" class="primary" id="btnEditSave">保存</button>
