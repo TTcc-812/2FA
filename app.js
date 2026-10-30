@@ -97,6 +97,37 @@
   let accounts = [];
   let editIndex = -1;
   let qrVisible = false;
+  let groups = [];
+  try { groups = JSON.parse(localStorage.getItem('simple2fa.groups') || '[]'); } catch (_) {}
+  if (!Array.isArray(groups)) groups = [];
+  groups = groups.filter(g => g && typeof g.id === 'string' && typeof g.name === 'string');
+  let boardView = localStorage.getItem('simple2fa.view') === 'grouped' ? 'grouped' : 'plain';
+  const saveGroups = () => localStorage.setItem('simple2fa.groups', JSON.stringify(groups));
+  function fillGroups(select, selected) {
+    select.replaceChildren();
+    for (const g of [{id:'',name:'未分组'}, ...groups]) {
+      const option = document.createElement('option');
+      option.value = g.id; option.textContent = g.name; select.appendChild(option);
+    }
+    select.value = selected || '';
+  }
+  function updateViewControls() {
+    $('btnPlainView').classList.toggle('primary', boardView === 'plain');
+    $('btnGroupView').classList.toggle('primary', boardView === 'grouped');
+    $('groupTools').classList.toggle('hidden', boardView !== 'grouped');
+    $('addGroupField').classList.toggle('hidden', boardView !== 'grouped');
+  }
+  $('btnPlainView').onclick = () => { boardView = 'plain'; localStorage.setItem('simple2fa.view', boardView); updateViewControls(); renderBoard(); };
+  $('btnGroupView').onclick = () => { boardView = 'grouped'; localStorage.setItem('simple2fa.view', boardView); updateViewControls(); renderBoard(); };
+  $('btnAddGroup').onclick = () => {
+    const name = $('newGroupName').value.trim();
+    if (!name || groups.some(g => g.name === name)) {
+      show($('boardMsg'), '分组名称不能为空或重复', true); return;
+    }
+    groups.push({id: 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2,7), name});
+    saveGroups(); $('newGroupName').value = ''; renderBoard();
+  };
+  updateViewControls();
   try {
     accounts = JSON.parse(localStorage.getItem('simple2fa.board') || '[]') || [];
   } catch (e) { accounts = []; }
@@ -260,6 +291,7 @@
     if (accounts.some(x => x.secret === acc.secret && x.label === acc.label)) {
       return { ok: false, msg: '该账号已存在' };
     }
+    acc.groupId = boardView === 'grouped' ? $('addGroup').value : '';
     accounts.push(acc);
     saveBoard();
     return { ok: true, msg: '已添加「' + (acc.label || '未命名') + '」' };
@@ -281,6 +313,7 @@
     if (!a) return;
     $('editLabel').value = a.label || '';
     $('editSecret').value = a.secret || '';
+    fillGroups($('editGroup'), a.groupId);
     show($('editErr'), '');
     $('editMask').classList.remove('hidden');
     $('editSecret').focus();
@@ -305,7 +338,7 @@
       show($('editErr'), '密钥无效：请使用 Base32（A–Z / 2–7）', true);
       return;
     }
-    accounts[editIndex] = { secret: parsed.secret, label: label || parsed.label || accounts[editIndex].label || '' };
+    accounts[editIndex] = { ...accounts[editIndex], secret: parsed.secret, label: label || parsed.label || accounts[editIndex].label || '', groupId: $('editGroup').value };
     saveBoard();
     closeEdit();
     show($('boardMsg'), '已保存修改');
@@ -321,12 +354,13 @@
     const period = 30;
     const left = Math.max(1, period - (Math.floor(Date.now() / 1000) % period));
     await Promise.all(cards.map(async (card, i) => {
-      const a = accounts[i];
+      const index = Number(card.dataset.index);
+      const a = accounts[index];
       if (!a) return;
       const codeEl = card.querySelector('.code');
       try {
         const code = await totp(a.secret);
-        if ((version !== boardRenderVersion || refresh !== boardRefreshVersion) || !card.isConnected || accounts[i] !== a) return;
+        if ((version !== boardRenderVersion || refresh !== boardRefreshVersion) || !card.isConnected || accounts[index] !== a) return;
         codeEl.dataset.code = code;
         codeEl.textContent = code.slice(0, 3) + ' ' + code.slice(3);
       } catch (e) {
@@ -349,11 +383,84 @@
       grid.innerHTML = '<div class="hint">还没有账号。用上方「添加账号」直接填名称和密钥即可。</div>';
       return;
     }
+    const grouped = boardView === 'grouped';
+    const targets = new Map();
+    const sections = grouped ? [...groups, {id:'',name:'未分组'}] : [{id:null,name:''}];
+    for (const section of sections) {
+      let target = grid;
+      if (grouped) {
+        const block = document.createElement('section');
+        block.className = 'account-group';
+        const heading = document.createElement('div');
+        heading.className = 'group-heading';
+        const title = document.createElement('h3');
+        title.textContent = section.name;
+        heading.appendChild(title);
+        const count = document.createElement('span');
+        count.className = 'group-count';
+        count.textContent = accounts.filter(a => (a.groupId || '') === section.id).length + ' 个账号';
+        heading.appendChild(count);
+        if (section.id) {
+          const rename = document.createElement('button');
+          rename.type = 'button'; rename.className = 'sm'; rename.textContent = '重命名';
+          rename.onclick = () => {
+            const value = prompt('分组名称', section.name);
+            if (value === null) return;
+            const next = value.trim();
+            if (!next || groups.some(g => g.id !== section.id && g.name === next)) {
+              show($('boardMsg'), '分组名称无效或重复', true); return;
+            }
+            groups.find(g => g.id === section.id).name = next;
+            saveGroups(); renderBoard();
+          };
+          heading.appendChild(rename);
+          const remove = document.createElement('button');
+          remove.type = 'button'; remove.className = 'sm danger'; remove.textContent = '删除分组';
+          remove.onclick = () => {
+            if (!confirm('删除此分组？账户将移到未分组，不会删除。')) return;
+            accounts.forEach(a => { if (a.groupId === section.id) a.groupId = ''; });
+            groups = groups.filter(g => g.id !== section.id);
+            saveGroups(); saveBoard(); renderBoard();
+          };
+          heading.appendChild(remove);
+        }
+        block.appendChild(heading);
+        target = document.createElement('div');
+        target.className = 'grid group-cards';
+        block.appendChild(target); grid.appendChild(block);
+        target.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
+        target.addEventListener('drop', e => {
+          e.preventDefault();
+          const from = Number(e.dataTransfer.getData('text/plain'));
+          if (!Number.isInteger(from) || from < 0 || from >= accounts.length) return;
+          const destCard = e.target.closest('.acct');
+          const to = destCard && target.contains(destCard) ? Number(destCard.dataset.index) : -1;
+          const [moving] = accounts.splice(from, 1);
+          moving.groupId = section.id;
+          const insertAt = to < 0 ? accounts.length : to - (from < to ? 1 : 0);
+          accounts.splice(insertAt, 0, moving);
+          saveBoard(); renderBoard();
+        });
+      }
+      targets.set(section.id, target);
+    }
+    grid.classList.toggle('grouped-board', grouped);
+    fillGroups($('addGroup'), $('addGroup').value);
     for (let i = 0; i < accounts.length; i++) {
       const a = accounts[i];
       const idx = i;
       const card = document.createElement('div');
       card.className = 'acct';
+      card.dataset.index = String(idx);
+      if (grouped) {
+        card.draggable = true;
+        card.addEventListener('dragstart', e => {
+          e.dataTransfer.setData('text/plain', String(idx));
+          e.dataTransfer.effectAllowed = 'move';
+          card.classList.add('dragging');
+        });
+        card.addEventListener('dragend', () => card.classList.remove('dragging'));
+      }
       card.innerHTML =
         '<div class="name"></div>' +
         '<div class="code" title="点击复制">······</div>' +
@@ -398,7 +505,8 @@
           show($('boardMsg'), '复制失败，请检查浏览器剪贴板权限或使用 HTTPS', true);
         });
       };
-      grid.appendChild(card);
+      const targetId = grouped ? (groups.some(g => g.id === a.groupId) ? a.groupId : '') : null;
+      targets.get(targetId).appendChild(card);
     }
     refreshBoardCodes();
   }
