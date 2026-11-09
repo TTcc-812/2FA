@@ -175,6 +175,8 @@ html:not([data-ui="v2"]) #v2 { display: none !important; }
 #v2 .n-side-foot { margin-top: 20px; padding: 12px 10px 0; border-top: 1px solid var(--n-line); font-size: 12px; color: var(--n-faint); line-height: 1.6; }
 
 #v2 .n-main { min-width: 0; padding: 20px 28px 48px; }
+/* 列表不要拉得太宽：名称和验证码靠近，扫一眼就能对上 */
+#v2 .n-main-head, #v2 .n-list, #v2 .n-tip { max-width: 760px; }
 #v2 .n-main-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; min-height: 36px; }
 #v2 .n-main-head h2 { display: inline; margin: 0; font-size: 18px; font-weight: 700; }
 #v2 .n-count { margin-left: 8px; font-size: 13px; color: var(--n-faint); }
