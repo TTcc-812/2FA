@@ -379,3 +379,21 @@ body.n-grabbing, body.n-grabbing * { cursor: grabbing !important; -webkit-user-s
 @media (prefers-reduced-motion: reduce) {
   #v2 * { transition: none !important; }
 }
+
+/* ===== 列表降噪：平时码淡一点，鼠标所在 / 选中的那行才突出；点整行复制 ===== */
+#v2 .n-row { cursor: pointer; -webkit-user-select: none; user-select: none; }
+#v2 .n-row .n-code { font-size: 17px; font-weight: 500; color: var(--n-muted); }
+#v2 .n-row:hover .n-code, #v2 .n-row.active .n-code { font-weight: 700; color: var(--n-text); background: var(--n-accent-soft); }
+#v2 .n-row .n-code:hover { color: var(--n-accent); }
+#v2 .n-app.urgent .n-row:not(:hover):not(.active) .n-code { color: var(--n-muted); }
+#v2 .n-app.urgent .n-row:hover .n-code, #v2 .n-app.urgent .n-row.active .n-code { color: var(--n-warn); }
+#v2 .n-app.soon .n-row:not(:hover):not(.active) .n-next { height: 0; opacity: 0; }
+#v2 .n-row.n-flash { background: color-mix(in srgb, var(--n-ok) 10%, transparent); }
+#v2 .n-main-head .n-btn { height: 34px; padding: 0 12px; font-size: 12.5px; }
+#v2 .n-main-head .n-btn[aria-pressed="true"] { background: var(--n-accent-soft); color: var(--n-accent); border-color: transparent; }
+/* 隐藏验证码：只有鼠标所在 / 选中的行显示 */
+#v2 .n-app.n-mask .n-row .n-code { transition: filter .15s, color .15s, background .15s; }
+#v2 .n-app.n-mask .n-row:not(:hover):not(.active) .n-code { filter: blur(7px); }
+/* 复制后原地提示 */
+#v2 .n-code.copied { font-size: 0 !important; color: var(--n-ok) !important; filter: none !important; background: color-mix(in srgb, var(--n-ok) 12%, transparent) !important; }
+#v2 .n-code.copied::after { content: "已复制 ✓"; font-size: 15px; font-weight: 600; letter-spacing: 0; font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
