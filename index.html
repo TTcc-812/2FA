@@ -9,9 +9,19 @@
 <title>2FA</title>
 <script src="./vendor/qrcode.js" defer></script>
 <link rel="stylesheet" href="./style.css">
+<link rel="stylesheet" href="./v2.css">
+<script>
+  /* 新旧界面切换：默认新版；localStorage simple2fa.ui = "v1" 时用旧版。提前设置避免闪烁。 */
+  (function () {
+    var ui = 'v2';
+    try { if (localStorage.getItem('simple2fa.ui') === 'v1') ui = 'v1'; } catch (e) {}
+    document.documentElement.setAttribute('data-ui', ui);
+  })();
+</script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%231a73e8'/%3E%3Cpath d='M20 34l8 8 16-18' fill='none' stroke='%23fff' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 </head>
 <body>
+<div id="v2"></div>
 <div class="wrap">
   <header>
     <div>
@@ -21,6 +31,7 @@
     <div class="tabs">
       <button type="button" id="tabSingle" class="primary">单账号</button>
       <button type="button" id="tabBoard">多账号看板</button>
+      <button type="button" id="btnNewUi" class="ui-switch" title="切换到新版界面（数据共用）">✨ 新版界面</button>
     </div>
   </header>
 
@@ -134,6 +145,19 @@
   </div>
 </div>
 
-<script src="./app.js"></script>
+<script>
+  /* 只加载当前界面的脚本：旧版 app.js 或新版 v2.js（两者共用同一份本地数据） */
+  (function () {
+    var ui = document.documentElement.getAttribute('data-ui');
+    var s = document.createElement('script');
+    s.src = ui === 'v1' ? './app.js' : './v2.js';
+    document.body.appendChild(s);
+    var b = document.getElementById('btnNewUi');
+    if (b) b.onclick = function () {
+      try { localStorage.setItem('simple2fa.ui', 'v2'); } catch (e) {}
+      location.reload();
+    };
+  })();
+</script>
 </body>
 </html>

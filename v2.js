@@ -1,0 +1,922 @@
+/* 新版界面（v2）：顶部搜索 + 左侧分组导航 + 紧凑账号列表。
+   与旧版（app.js）共用同一份本地数据：simple2fa.board / simple2fa.groups，
+   两边随时切换，数据不丢。新版额外给账号加了可选字段 fav（常用）和 used（最近复制时间），旧版会原样保留。 */
+(function () {
+  'use strict';
+  const root = document.getElementById('v2');
+  if (!root) return;
+
+  const K_BOARD = 'simple2fa.board';
+  const K_GROUPS = 'simple2fa.groups';
+  const K_UI = 'simple2fa.ui';
+  const K_PREFS = 'simple2fa.v2prefs';
+  const PERIOD = 30;
+  const RING = 97.39; // 2π × 15.5
+
+  /* ---------- TOTP ---------- */
+  const A32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  function b32decode(s) {
+    s = (s || '').replace(/=+$/, '').replace(/\s/g, '').toUpperCase();
+    if (!s || /[^A-Z2-7]/.test(s)) return null;
+    let bits = 0, val = 0; const out = [];
+    for (const ch of s) {
+      val = (val << 5) | A32.indexOf(ch); bits += 5;
+      if (bits >= 8) { out.push((val >>> (bits - 8)) & 255); bits -= 8; }
+    }
+    return out.length ? new Uint8Array(out) : null;
+  }
+  const keyCache = new Map();
+  async function hotp(secret, counter) {
+    let key = keyCache.get(secret);
+    if (!key) {
+      const raw = b32decode(secret);
+      if (!raw) throw new Error('invalid secret');
+      key = crypto.subtle.importKey('raw', raw, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+      keyCache.set(secret, key);
+    }
+    const buf = new ArrayBuffer(8);
+    const dv = new DataView(buf);
+    dv.setUint32(0, Math.floor(counter / 0x100000000));
+    dv.setUint32(4, counter >>> 0);
+    const sig = new Uint8Array(await crypto.subtle.sign('HMAC', await key, buf));
+    const off = sig[sig.length - 1] & 0x0f;
+    const bin = ((sig[off] & 0x7f) << 24) | (sig[off + 1] << 16) | (sig[off + 2] << 8) | sig[off + 3];
+    return String(bin % 1000000).padStart(6, '0');
+  }
+
+  function parseSecretInput(raw) {
+    raw = (raw || '').trim();
+    if (!raw) return null;
+    let secret = '', label = '';
+    if (/^otpauth:\/\//i.test(raw)) {
+      try {
+        const u = new URL(raw);
+        secret = (u.searchParams.get('secret') || '').trim();
+        const path = decodeURIComponent(u.pathname.replace(/^\/+/, ''));
+        label = path.includes(':') ? path.split(':').slice(1).join(':').trim() : path;
+      } catch (e) { return null; }
+    } else if (raw.includes('secret=')) {
+      const q = raw.includes('#') ? raw.slice(raw.indexOf('#') + 1) : raw.replace(/^\?/, '');
+      const sp = new URLSearchParams(q);
+      secret = (sp.get('secret') || '').trim();
+      label = sp.get('label') || '';
+    } else {
+      secret = raw.replace(/\s/g, '');
+    }
+    if (!b32decode(secret)) return null;
+    return { secret: secret.toUpperCase().replace(/\s/g, ''), label: label || '' };
+  }
+  function otpauthUrl(acc) {
+    const sp = new URLSearchParams();
+    sp.set('secret', acc.secret);
+    sp.set('issuer', '2FA');
+    return 'otpauth://totp/' + encodeURIComponent(acc.label || 'account') + '?' + sp.toString();
+  }
+  function bookmarkUrl(acc) {
+    const sp = new URLSearchParams();
+    sp.set('secret', acc.secret);
+    if (acc.label) sp.set('label', acc.label);
+    return location.origin + location.pathname + '#' + sp.toString();
+  }
+  function makeQrDataUrl(text) {
+    if (typeof qrcode === 'undefined') return null;
+    try { const qr = qrcode(0, 'M'); qr.addData(text); qr.make(); return qr.createDataURL(5, 2); }
+    catch (e) { return null; }
+  }
+  function copyText(t) {
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(t);
+    const ta = document.createElement('textarea');
+    ta.value = t; document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand('copy'); ta.remove();
+    return ok ? Promise.resolve() : Promise.reject(new Error('copy failed'));
+  }
+  const fmt = (c) => c.slice(0, 3) + ' ' + c.slice(3);
+
+  /* ---------- 数据（与旧版共用） ---------- */
+  function readJSON(k, fb) {
+    try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? fb : v; } catch (_) { return fb; }
+  }
+  function writeJSON(k, v) {
+    try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) { toast('保存失败：浏览器存储不可用', true); }
+  }
+  let accounts = [], groups = [];
+  function loadData() {
+    accounts = readJSON(K_BOARD, []);
+    if (!Array.isArray(accounts)) accounts = [];
+    accounts = accounts.filter((a) => a && typeof a.secret === 'string');
+    groups = readJSON(K_GROUPS, []);
+    if (!Array.isArray(groups)) groups = [];
+    groups = groups.filter((g) => g && typeof g.id === 'string' && typeof g.name === 'string');
+    // 与旧版一致：一次性初始化默认分组，之后尊重用户的增删
+    if (localStorage.getItem('simple2fa.defaultGroupsV1') !== '1') {
+      for (const name of ['ejhcard', 'xf', 'jt']) {
+        if (!groups.some((g) => g.name.toLowerCase() === name)) groups.push({ id: 'default-' + name, name });
+      }
+      writeJSON(K_GROUPS, groups);
+      try { localStorage.setItem('simple2fa.defaultGroupsV1', '1'); } catch (_) {}
+    }
+  }
+  loadData();
+  const saveBoard = () => writeJSON(K_BOARD, accounts);
+  const saveGroups = () => writeJSON(K_GROUPS, groups);
+
+  const prefs = readJSON(K_PREFS, {}) || {};
+  let filter = typeof prefs.filter === 'string' ? prefs.filter : 'all';
+  let sort = ['custom', 'recent', 'name'].includes(prefs.sort) ? prefs.sort : 'custom';
+  const savePrefs = () => writeJSON(K_PREFS, { filter, sort });
+
+  let query = '';
+  let visible = [];      // 当前渲染顺序里的账号
+  let activeIdx = -1;    // 键盘选中行
+  let quick = null;      // 临时出码的账号（不保存）
+
+  const gid = (a) => (a.groupId && groups.some((g) => g.id === a.groupId) ? a.groupId : '');
+  const groupName = (id) => (id ? (groups.find((g) => g.id === id) || {}).name || '' : '未分组');
+  function validFilter() {
+    if (filter === 'all' || filter === 'fav' || filter === 'g:') return;
+    if (!(filter.startsWith('g:') && groups.some((g) => 'g:' + g.id === filter))) filter = 'all';
+  }
+  validFilter();
+
+  /* ---------- DOM 骨架 ---------- */
+  const P = {
+    search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+    copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
+    qr: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM21 14v.01M14 21h.01M17 21h4v-4"/>',
+    edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+    x: '<path d="M18 6 6 18M6 6l12 12"/>',
+    check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+    swap: '<path d="M7 7h13l-4-4M17 17H4l4 4"/>',
+    bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7Z"/>',
+    upload: '<path d="M12 15V3M7 8l5-5 5 5M5 21h14"/>',
+    trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>',
+  };
+  const svg = (p, s) => '<svg viewBox="0 0 24 24" width="' + (s || 16) + '" height="' + (s || 16) +
+    '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + P[p] + '</svg>';
+
+  root.innerHTML = `
+<div class="n-app" id="nApp">
+  <header class="n-top">
+    <div class="n-brand">
+      <span class="n-logo">${svg('check', 18)}</span>
+      <div><b>2FA 验证码</b><small>本地计算 · 密钥不上传</small></div>
+    </div>
+    <label class="n-search">
+      ${svg('search')}
+      <input id="nQ" type="search" placeholder="搜索账号或分组…" autocomplete="off" spellcheck="false" aria-label="搜索账号">
+      <button type="button" class="n-search-clear" id="nQClear" aria-label="清空搜索" hidden>${svg('x', 14)}</button>
+      <kbd>/</kbd>
+    </label>
+    <div class="n-top-actions">
+      <button type="button" class="n-btn n-primary" id="nAdd">${svg('plus')}<span>添加</span></button>
+      <div class="n-menu-wrap">
+        <button type="button" class="n-btn n-icon" id="nMore" aria-haspopup="menu" aria-expanded="false" title="更多">${svg('more', 18)}</button>
+        <div class="n-menu" id="nMoreMenu" role="menu" hidden>
+          <button type="button" role="menuitem" data-act="quick">${svg('bolt')}临时出码（不保存）</button>
+          <button type="button" role="menuitem" data-act="bulk">${svg('upload')}批量导入</button>
+          <button type="button" role="menuitem" data-act="export">${svg('copy')}复制全部书签链接</button>
+          <hr>
+          <button type="button" role="menuitem" data-act="clear" class="n-menu-danger">${svg('trash')}清空全部账号</button>
+        </div>
+      </div>
+      <button type="button" class="n-btn n-ghost" id="nToOld" title="切换回旧版界面（数据共用）">${svg('swap')}<span>旧版</span></button>
+    </div>
+  </header>
+
+  <div class="n-body">
+    <nav class="n-side" id="nSide" aria-label="分组筛选"></nav>
+    <main class="n-main">
+      <div class="n-main-head">
+        <div><h2 id="nTitle"></h2><span class="n-count" id="nCount"></span></div>
+        <div class="n-head-right">
+          <select class="n-select" id="nSort" aria-label="排序">
+            <option value="custom">默认顺序</option>
+            <option value="recent">最近使用</option>
+            <option value="name">名称 A–Z</option>
+          </select>
+          <div class="n-ring" title="当前验证码剩余秒数">
+            <svg viewBox="0 0 36 36"><circle class="n-ring-bg" cx="18" cy="18" r="15.5"/><circle class="n-ring-fg" id="nRingFg" cx="18" cy="18" r="15.5"/></svg>
+            <span id="nSec">30</span>
+          </div>
+        </div>
+      </div>
+      <div class="n-list" id="nList"></div>
+      <p class="n-tip">快捷键：<kbd>/</kbd> 搜索 · <kbd>↑</kbd><kbd>↓</kbd> 选择 · <kbd>Enter</kbd> 复制验证码 · <kbd>Esc</kbd> 清空搜索。点击验证码即可复制，点 ☆ 收藏到「常用」。</p>
+    </main>
+  </div>
+
+  <dialog class="n-dlg" id="nDlgAdd" aria-labelledby="nDlgAddTitle">
+    <div class="n-dlg-head"><h3 id="nDlgAddTitle">添加账号</h3><button type="button" class="n-act" data-close aria-label="关闭">${svg('x')}</button></div>
+    <div class="n-tabs" role="tablist">
+      <button type="button" class="n-tab" data-tab="one" role="tab">单个添加</button>
+      <button type="button" class="n-tab" data-tab="bulk" role="tab">批量导入</button>
+      <button type="button" class="n-tab" data-tab="quick" role="tab">临时出码</button>
+    </div>
+    <div data-pane="one">
+      <div class="n-dlg-body">
+        <div class="n-field"><label for="nAddLabel">账号名称</label><input class="n-input" id="nAddLabel" placeholder="例如 GitHub" spellcheck="false" autocomplete="off"></div>
+        <div class="n-field"><label for="nAddSecret">密钥 / SECRET</label><textarea class="n-input" id="nAddSecret" rows="2" placeholder="Base32 密钥，或 otpauth:// 链接（会自动识别名称）" spellcheck="false" autocomplete="off"></textarea></div>
+        <div class="n-grid2 n-field">
+          <div><label class="n-label" for="nAddGroup">所属分组</label><select class="n-input" id="nAddGroup"></select></div>
+          <label class="n-check"><input type="checkbox" id="nAddFav"> 加入「常用」</label>
+        </div>
+        <div class="n-err" id="nAddErr" hidden></div>
+      </div>
+      <div class="n-dlg-foot"><button type="button" class="n-btn" data-close>取消</button><button type="button" class="n-btn n-primary" id="nAddOk">添加</button></div>
+    </div>
+    <div data-pane="bulk">
+      <div class="n-dlg-body">
+        <div class="n-field"><label for="nBulk">每行一个</label><textarea class="n-input" id="nBulk" rows="6" placeholder="密钥&#10;otpauth://totp/GitHub?secret=…&#10;#secret=xxx&amp;label=名称" spellcheck="false"></textarea></div>
+        <div class="n-field"><label for="nBulkGroup">导入到分组</label><select class="n-input" id="nBulkGroup"></select></div>
+        <div class="n-err" id="nBulkErr" hidden></div>
+      </div>
+      <div class="n-dlg-foot"><button type="button" class="n-btn" data-close>取消</button><button type="button" class="n-btn n-primary" id="nBulkOk">导入</button></div>
+    </div>
+    <div data-pane="quick">
+      <div class="n-dlg-body">
+        <p class="n-hint" style="margin-top:0">只在这里临时算一次验证码，不会保存到账号列表。</p>
+        <div class="n-field"><label for="nQuickSecret">密钥 / SECRET</label><textarea class="n-input" id="nQuickSecret" rows="2" placeholder="粘贴 Base32 密钥，或 otpauth:// 链接" spellcheck="false" autocomplete="off"></textarea></div>
+        <div class="n-field"><label for="nQuickLabel">账号名称（可选）</label><input class="n-input" id="nQuickLabel" placeholder="例如 GitHub" spellcheck="false" autocomplete="off"></div>
+        <div class="n-err" id="nQuickErr" hidden></div>
+        <div class="n-quick-res" id="nQuickRes" hidden>
+          <div class="n-quick-top">
+            <button type="button" class="n-code" id="nQuickCode" data-kind="code" title="点击复制">··· ···</button>
+            <span class="n-cnt" id="nQuickSec"></span>
+          </div>
+          <div class="n-quick-acts">
+            <button type="button" class="n-btn" id="nQuickBm">复制书签链接</button>
+            <button type="button" class="n-btn" id="nQuickOtp">复制 otpauth</button>
+            <button type="button" class="n-btn" id="nQuickQr">二维码</button>
+            <button type="button" class="n-btn" id="nQuickSave">保存到列表</button>
+          </div>
+        </div>
+      </div>
+      <div class="n-dlg-foot"><button type="button" class="n-btn" data-close>关闭</button><button type="button" class="n-btn n-primary" id="nQuickGo">生成验证码</button></div>
+    </div>
+  </dialog>
+
+  <dialog class="n-dlg" id="nDlgEdit" aria-labelledby="nDlgEditTitle">
+    <div class="n-dlg-head"><h3 id="nDlgEditTitle">编辑账号</h3><button type="button" class="n-act" data-close aria-label="关闭">${svg('x')}</button></div>
+    <div class="n-dlg-body">
+      <div class="n-field"><label for="nEditLabel">账号名称</label><input class="n-input" id="nEditLabel" spellcheck="false" autocomplete="off"></div>
+      <div class="n-field"><label for="nEditSecret">密钥 / SECRET</label><input class="n-input" id="nEditSecret" spellcheck="false" autocomplete="off" style="font-family:var(--n-mono);font-size:13px"></div>
+      <div class="n-grid2 n-field">
+        <div><label class="n-label" for="nEditGroup">所属分组</label><select class="n-input" id="nEditGroup"></select></div>
+        <label class="n-check"><input type="checkbox" id="nEditFav"> 常用</label>
+      </div>
+      <div class="n-err" id="nEditErr" hidden></div>
+    </div>
+    <div class="n-dlg-foot">
+      <button type="button" class="n-btn n-danger n-spacer" id="nEditDel">删除</button>
+      <button type="button" class="n-btn" data-close>取消</button>
+      <button type="button" class="n-btn n-primary" id="nEditOk">保存</button>
+    </div>
+  </dialog>
+
+  <dialog class="n-dlg" id="nDlgQr" aria-labelledby="nQrTitle" style="width:min(360px,calc(100vw - 24px))">
+    <div class="n-dlg-head"><h3 id="nQrTitle">二维码</h3><button type="button" class="n-act" data-close aria-label="关闭">${svg('x')}</button></div>
+    <div class="n-dlg-body n-qr">
+      <img id="nQrImg" alt="otpauth 二维码">
+      <p>可用 Authenticator 等 App 扫码导入（含密钥，勿公开分享）</p>
+      <div class="n-mono-box" id="nQrText"></div>
+    </div>
+    <div class="n-dlg-foot"><button type="button" class="n-btn" id="nQrCopy">复制 otpauth 链接</button><button type="button" class="n-btn n-primary" data-close>关闭</button></div>
+  </dialog>
+
+  <div class="n-toast" id="nToast" role="status" aria-live="polite"></div>
+</div>`;
+
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  };
+  const app = $('nApp');
+  const qInput = $('nQ');
+
+  /* ---------- 提示条 ---------- */
+  let toastTimer = 0;
+  function toast(text, isErr) {
+    const t = $('nToast');
+    if (!t) return;
+    t.textContent = text;
+    t.classList.toggle('err', !!isErr);
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), isErr ? 3200 : 1800);
+  }
+  function showErr(id, text) { const e = $(id); e.textContent = text || ''; e.hidden = !text; }
+
+  /* ---------- 验证码计算（全部账号共用一个 30 秒节拍） ---------- */
+  const codes = new Map(); // secret -> { c, code, next }
+  let curCounter = Math.floor(Date.now() / 1000 / PERIOD);
+  function paintCodes() {
+    for (const node of root.querySelectorAll('[data-secret]')) {
+      const e = codes.get(node.dataset.secret);
+      const ready = e && e.c === curCounter;
+      if (node.dataset.kind === 'next') {
+        node.textContent = ready && e.next ? '下一个 ' + fmt(e.next) : '';
+        continue;
+      }
+      if (!ready) { node.textContent = '··· ···'; node.classList.remove('bad'); continue; }
+      node.textContent = e.code ? fmt(e.code) : '密钥无效';
+      node.classList.toggle('bad', !e.code);
+    }
+  }
+  async function ensureCodes() {
+    const counter = Math.floor(Date.now() / 1000 / PERIOD);
+    curCounter = counter;
+    const need = new Set(accounts.map((a) => a.secret));
+    if (quick) need.add(quick.secret);
+    const todo = [...need].filter((s) => { const e = codes.get(s); return !e || e.c !== counter; });
+    if (!todo.length) return;
+    await Promise.all(todo.map(async (s) => {
+      let code = null, next = null;
+      try { [code, next] = await Promise.all([hotp(s, counter), hotp(s, counter + 1)]); } catch (_) {}
+      codes.set(s, { c: counter, code, next });
+    }));
+    if (counter === curCounter) paintCodes();
+  }
+  function currentCode(secret) {
+    const e = codes.get(secret);
+    return e && e.c === Math.floor(Date.now() / 1000 / PERIOD) ? e.code : null;
+  }
+
+  function copyAccount(a, codeEl) {
+    const code = currentCode(a.secret);
+    if (!code) { toast(codes.get(a.secret) && codes.get(a.secret).code === null ? '密钥无效，请编辑后重试' : '验证码尚未生成，请稍后重试', true); return; }
+    copyText(code).then(() => {
+      toast('已复制「' + (a.label || '未命名') + '」 ' + fmt(code));
+      if (accounts.includes(a)) { a.used = Date.now(); saveBoard(); }
+      if (codeEl) {
+        codeEl.classList.add('copied');
+        setTimeout(() => codeEl.classList.remove('copied'), 900);
+      }
+    }).catch(() => toast('复制失败，请检查浏览器剪贴板权限或使用 HTTPS', true));
+  }
+
+  /* ---------- 侧栏 ---------- */
+  function hue(str) { let h = 0; for (const ch of str) h = (h * 31 + ch.codePointAt(0)) >>> 0; return h % 360; }
+  function dot(id) {
+    const d = el('span', 'n-dot');
+    d.style.background = id ? 'hsl(' + hue(id) + ' 62% 55%)' : 'var(--n-faint)';
+    return d;
+  }
+  function navBtn(f, icon, label, n) {
+    const b = el('button', 'n-nav');
+    b.type = 'button';
+    b.dataset.f = f;
+    if (filter === f && !query.trim()) { b.classList.add('on'); b.setAttribute('aria-current', 'true'); }
+    const ic = el('span', 'n-nav-ic');
+    if (typeof icon === 'string') ic.innerHTML = icon; else ic.appendChild(icon);
+    if (f === 'fav') ic.classList.add('n-star-ic');
+    b.append(ic, el('span', 'n-nav-label', label), el('span', 'n-cnt', String(n)));
+    b.onclick = () => setFilter(f);
+    return b;
+  }
+  function miniBtn(html, title, onclick, danger) {
+    const b = el('button', 'n-mini' + (danger ? ' n-mini-danger' : ''));
+    b.type = 'button'; b.title = title; b.setAttribute('aria-label', title);
+    b.innerHTML = html;
+    b.onclick = (e) => { e.stopPropagation(); onclick(); };
+    return b;
+  }
+  function renderSide() {
+    const side = $('nSide');
+    side.replaceChildren();
+    const cnt = (fn) => accounts.filter(fn).length;
+    side.append(
+      navBtn('fav', '★', '常用', cnt((a) => a.fav)),
+      navBtn('all', svg('list'), '全部账号', accounts.length)
+    );
+    const title = el('div', 'n-side-title');
+    title.append(el('span', '', '分组'), miniBtn(svg('plus', 14), '新建分组', newGroup));
+    side.appendChild(title);
+    for (const g of groups) {
+      const wrap = el('div', 'n-grp');
+      if (filter === 'g:' + g.id) wrap.classList.add('cur');
+      const acts = el('span', 'n-grp-acts');
+      acts.append(
+        miniBtn(svg('edit', 13), '重命名分组', () => renameGroup(g)),
+        miniBtn(svg('x', 13), '删除分组', () => deleteGroup(g), true)
+      );
+      wrap.append(navBtn('g:' + g.id, dot(g.id), g.name, cnt((a) => gid(a) === g.id)), acts);
+      side.appendChild(wrap);
+    }
+    side.appendChild(navBtn('g:', dot(''), '未分组', cnt((a) => !gid(a))));
+    const addChip = miniBtn(svg('plus', 14), '新建分组', newGroup);
+    addChip.classList.add('n-side-add');
+    side.appendChild(addChip);
+    const foot = el('div', 'n-side-foot', '数据只保存在本机浏览器。新旧界面共用同一份数据。');
+    side.appendChild(foot);
+  }
+
+  function setFilter(f) {
+    filter = f;
+    query = '';
+    qInput.value = '';
+    activeIdx = -1;
+    savePrefs();
+    render();
+  }
+  function newGroup() {
+    const v = prompt('新分组名称', '');
+    if (v === null) return;
+    const name = v.trim();
+    if (!name || groups.some((g) => g.name === name)) { toast('分组名称不能为空或重复', true); return; }
+    const g = { id: 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), name };
+    groups.push(g);
+    saveGroups();
+    setFilter('g:' + g.id);
+    toast('已创建分组「' + name + '」');
+  }
+  function renameGroup(g) {
+    const v = prompt('分组名称', g.name);
+    if (v === null) return;
+    const name = v.trim();
+    if (!name || groups.some((x) => x !== g && x.name === name)) { toast('分组名称无效或重复', true); return; }
+    g.name = name;
+    saveGroups();
+    render();
+  }
+  function deleteGroup(g) {
+    if (!confirm('删除分组「' + g.name + '」？其中的账号会移到「未分组」，不会被删除。')) return;
+    accounts.forEach((a) => { if (a.groupId === g.id) a.groupId = ''; });
+    groups = groups.filter((x) => x !== g);
+    saveGroups(); saveBoard();
+    if (filter === 'g:' + g.id) filter = 'all';
+    savePrefs();
+    render();
+    toast('已删除分组');
+  }
+
+  /* ---------- 列表 ---------- */
+  function sortList(list) {
+    if (sort === 'name') return list.slice().sort((a, b) => (a.label || '').localeCompare(b.label || '', 'zh-CN', { numeric: true }));
+    if (sort === 'recent') return list.slice().sort((a, b) => (b.used || 0) - (a.used || 0));
+    return list;
+  }
+  function searchList(q) {
+    const scored = [];
+    accounts.forEach((a, i) => {
+      const name = (a.label || '').toLowerCase();
+      const grp = groupName(gid(a)).toLowerCase();
+      let s = -1;
+      if (name === q) s = 0;
+      else if (name.startsWith(q)) s = 1;
+      else if (name.includes(q)) s = 2;
+      else if (grp.includes(q)) s = 3;
+      if (s >= 0) scored.push({ a, s, i });
+    });
+    scored.sort((x, y) => x.s - y.s || (sort === 'recent' ? (y.a.used || 0) - (x.a.used || 0) : 0) || x.i - y.i);
+    return scored.map((x) => x.a);
+  }
+  function highlight(node, text, q) {
+    if (!q) { node.textContent = text; return; }
+    const lower = text.toLowerCase();
+    let from = 0, at;
+    while ((at = lower.indexOf(q, from)) >= 0) {
+      node.append(text.slice(from, at), el('mark', '', text.slice(at, at + q.length)));
+      from = at + q.length;
+    }
+    node.append(text.slice(from));
+  }
+
+  function buildRow(a, showGroup, q) {
+    const vi = visible.length;
+    visible.push(a);
+    const row = el('div', 'n-row');
+    row.dataset.vi = String(vi);
+
+    const star = el('button', 'n-star' + (a.fav ? ' on' : ''), a.fav ? '★' : '☆');
+    star.type = 'button';
+    star.title = a.fav ? '取消常用' : '加入常用';
+    star.setAttribute('aria-pressed', String(!!a.fav));
+    star.onclick = () => {
+      if (a.fav) delete a.fav; else a.fav = true;
+      saveBoard();
+      if (filter === 'fav' && !query.trim()) { render(); return; }
+      star.textContent = a.fav ? '★' : '☆';
+      star.classList.toggle('on', !!a.fav);
+      star.title = a.fav ? '取消常用' : '加入常用';
+      star.setAttribute('aria-pressed', String(!!a.fav));
+      renderSide();
+    };
+
+    const info = el('div', 'n-info');
+    const name = el('div', 'n-name');
+    name.title = a.label || '未命名';
+    highlight(name, a.label || '未命名', q);
+    info.appendChild(name);
+    if (showGroup) {
+      const sub = el('div', 'n-sub');
+      const pill = el('span', 'n-pill');
+      const id = gid(a);
+      pill.append(dot(id));
+      highlight(pill, groupName(id), q);
+      sub.appendChild(pill);
+      info.appendChild(sub);
+    }
+
+    const box = el('div', 'n-codebox');
+    const code = el('button', 'n-code', '··· ···');
+    code.type = 'button';
+    code.title = '点击复制验证码';
+    code.dataset.secret = a.secret;
+    code.dataset.kind = 'code';
+    code.onclick = () => { setActive(vi, false); copyAccount(a, code); };
+    const next = el('span', 'n-next');
+    next.dataset.secret = a.secret;
+    next.dataset.kind = 'next';
+    box.append(code, next);
+
+    const acts = el('div', 'n-acts');
+    const act = (icon, title, fn) => {
+      const b = el('button', 'n-act');
+      b.type = 'button'; b.title = title; b.setAttribute('aria-label', title);
+      b.innerHTML = svg(icon);
+      b.onclick = fn;
+      return b;
+    };
+    acts.append(
+      act('copy', '复制验证码', () => copyAccount(a, code)),
+      act('qr', '二维码', () => openQr(a)),
+      act('edit', '编辑 / 删除', () => openEdit(a))
+    );
+
+    row.append(star, info, box, acts);
+    row.addEventListener('click', (e) => { if (!e.target.closest('button')) setActive(vi, false); });
+    return row;
+  }
+
+  function emptyState(title, text, buttons) {
+    const box = el('div', 'n-empty');
+    box.append(el('b', '', title), el('p', '', text));
+    if (buttons && buttons.length) {
+      const acts = el('div', 'n-empty-acts');
+      for (const [label, fn, primary] of buttons) {
+        const b = el('button', 'n-btn' + (primary ? ' n-primary' : ''), label);
+        b.type = 'button'; b.onclick = fn; acts.appendChild(b);
+      }
+      box.appendChild(acts);
+    }
+    return box;
+  }
+
+  function render() {
+    validFilter();
+    renderSide();
+    const list = $('nList');
+    list.replaceChildren();
+    visible = [];
+    const q = query.trim().toLowerCase();
+    $('nSort').value = sort;
+    $('nQClear').hidden = !query;
+
+    let title, items;
+    if (q) {
+      title = '搜索“' + query.trim() + '”';
+      items = searchList(q);
+    } else if (filter === 'all') {
+      title = '全部账号';
+      items = accounts;
+    } else if (filter === 'fav') {
+      title = '常用';
+      items = sortList(accounts.filter((a) => a.fav));
+    } else {
+      const id = filter.slice(2);
+      title = groupName(id);
+      items = sortList(accounts.filter((a) => gid(a) === id));
+    }
+    $('nTitle').textContent = title;
+    $('nCount').textContent = items.length + ' 个账号';
+
+    if (!accounts.length) {
+      list.appendChild(emptyState('还没有账号', '粘贴密钥或 otpauth:// 链接就能添加，数据只保存在本机浏览器。', [
+        ['添加第一个账号', () => openAdd('one'), true],
+        ['批量导入', () => openAdd('bulk')],
+        ['临时出码', () => openAdd('quick')],
+      ]));
+    } else if (!items.length) {
+      if (q) list.appendChild(emptyState('没有找到匹配的账号', '试试别的关键词，名称和分组名都能搜。', [['清空搜索', () => { qInput.value = ''; onQuery(); qInput.focus(); }]]));
+      else if (filter === 'fav') list.appendChild(emptyState('还没有常用账号', '点击账号左侧的 ☆，就能把经常用的账号收藏到这里，打开就能找到。', [['查看全部账号', () => setFilter('all')]]));
+      else list.appendChild(emptyState('这个分组还没有账号', '添加账号时选择这个分组，或在账号的「编辑」里把它移过来。', [['添加账号', () => openAdd('one'), true]]));
+    } else if (!q && filter === 'all') {
+      // 全部：按分组分段显示，分组标题可点击直接跳到该分组
+      const sections = [...groups.map((g) => g.id), ''];
+      for (const id of sections) {
+        const sec = sortList(items.filter((a) => gid(a) === id));
+        if (!sec.length) continue;
+        const wrap = el('section');
+        const head = el('div', 'n-sec-head');
+        const hb = el('button');
+        hb.type = 'button';
+        hb.title = '只看这个分组';
+        hb.append(dot(id), el('span', '', groupName(id)), el('span', 'n-cnt', String(sec.length)));
+        hb.onclick = () => setFilter('g:' + id);
+        head.appendChild(hb);
+        const rows = el('div', 'n-rows');
+        for (const a of sec) rows.appendChild(buildRow(a, false, ''));
+        wrap.append(head, rows);
+        list.appendChild(wrap);
+      }
+    } else {
+      const rows = el('div', 'n-rows');
+      const showGroup = !!q || filter === 'fav';
+      for (const a of items) rows.appendChild(buildRow(a, showGroup, q));
+      list.appendChild(rows);
+    }
+    if (activeIdx >= visible.length) activeIdx = visible.length - 1;
+    updateActive(false);
+    paintCodes();
+    ensureCodes();
+  }
+
+  function setActive(i, scroll) { activeIdx = i; updateActive(scroll); }
+  function updateActive(scroll) {
+    for (const r of root.querySelectorAll('.n-row')) {
+      const on = Number(r.dataset.vi) === activeIdx;
+      r.classList.toggle('active', on);
+      if (on && scroll) r.scrollIntoView({ block: 'nearest' });
+    }
+  }
+  function moveActive(d) {
+    if (!visible.length) return;
+    activeIdx = activeIdx < 0 ? (d > 0 ? 0 : visible.length - 1) : Math.min(visible.length - 1, Math.max(0, activeIdx + d));
+    updateActive(true);
+  }
+  function copyActive() {
+    const i = activeIdx < 0 ? 0 : activeIdx;
+    const a = visible[i];
+    if (!a) return;
+    const row = root.querySelector('.n-row[data-vi="' + i + '"]');
+    setActive(i, true);
+    copyAccount(a, row && row.querySelector('.n-code'));
+  }
+
+  /* ---------- 搜索与快捷键 ---------- */
+  function onQuery() {
+    query = qInput.value;
+    activeIdx = query.trim() ? 0 : -1;
+    render();
+  }
+  qInput.addEventListener('input', onQuery);
+  qInput.addEventListener('keydown', (e) => {
+    if (e.isComposing) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); moveActive(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); moveActive(-1); }
+    else if (e.key === 'Enter') { e.preventDefault(); copyActive(); }
+    else if (e.key === 'Escape') {
+      e.preventDefault();
+      if (qInput.value) { qInput.value = ''; onQuery(); } else qInput.blur();
+    }
+  });
+  $('nQClear').onclick = () => { qInput.value = ''; onQuery(); qInput.focus(); };
+  document.addEventListener('keydown', (e) => {
+    if (root.querySelector('dialog[open]') || e.isComposing) return;
+    const t = e.target;
+    const typing = t && t.closest && t.closest('input, textarea, select, [contenteditable="true"]');
+    if ((e.key === 'k' || e.key === 'K') && (e.metaKey || e.ctrlKey)) { e.preventDefault(); qInput.focus(); qInput.select(); return; }
+    if (typing) return;
+    if (e.key === '/') { e.preventDefault(); qInput.focus(); qInput.select(); }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); moveActive(e.key === 'ArrowDown' ? 1 : -1); }
+    else if (e.key === 'Enter' && activeIdx >= 0 && !(t.closest && t.closest('button'))) { e.preventDefault(); copyActive(); }
+    else if (e.key === 'Escape' && activeIdx >= 0) { setActive(-1, false); }
+  });
+  $('nSort').onchange = () => { sort = $('nSort').value; savePrefs(); render(); };
+
+  /* ---------- 顶栏菜单 ---------- */
+  const menu = $('nMoreMenu');
+  function toggleMenu(open) {
+    menu.hidden = !open;
+    $('nMore').setAttribute('aria-expanded', String(open));
+  }
+  $('nMore').onclick = (e) => { e.stopPropagation(); toggleMenu(menu.hidden); };
+  document.addEventListener('click', (e) => { if (!menu.hidden && !menu.contains(e.target)) toggleMenu(false); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !menu.hidden) toggleMenu(false); });
+  menu.onclick = (e) => {
+    const b = e.target.closest('button[data-act]');
+    if (!b) return;
+    toggleMenu(false);
+    const act = b.dataset.act;
+    if (act === 'quick') openAdd('quick');
+    else if (act === 'bulk') openAdd('bulk');
+    else if (act === 'export') {
+      if (!accounts.length) { toast('还没有账号', true); return; }
+      copyText(accounts.map(bookmarkUrl).join('\n'))
+        .then(() => toast('已复制 ' + accounts.length + ' 个账号的书签链接（含密钥，请妥善保存）'))
+        .catch(() => toast('复制失败，请检查剪贴板权限', true));
+    } else if (act === 'clear') {
+      if (!accounts.length) { toast('列表已经是空的'); return; }
+      if (!confirm('确定清空全部 ' + accounts.length + ' 个账号？此操作不可撤销，建议先「复制全部书签链接」备份。')) return;
+      accounts = []; saveBoard(); render(); toast('已清空');
+    }
+  };
+  $('nAdd').onclick = () => openAdd('one');
+  $('nToOld').onclick = () => {
+    try { localStorage.setItem(K_UI, 'v1'); } catch (_) {}
+    location.reload();
+  };
+
+  /* ---------- 弹窗通用 ---------- */
+  for (const dlg of root.querySelectorAll('dialog')) {
+    dlg.addEventListener('click', (e) => {
+      if (e.target === dlg || e.target.closest('[data-close]')) dlg.close();
+    });
+  }
+  function fillGroups(select, selected) {
+    select.replaceChildren();
+    for (const g of [{ id: '', name: '未分组' }, ...groups]) {
+      const o = el('option', '', g.name); o.value = g.id; select.appendChild(o);
+    }
+    select.value = groups.some((g) => g.id === selected) ? selected : '';
+  }
+  const currentGroupId = () => (filter.startsWith('g:') && !query.trim() ? filter.slice(2) : '');
+
+  /* ---------- 添加 / 导入 / 临时出码 ---------- */
+  const dlgAdd = $('nDlgAdd');
+  function setTab(tab) {
+    for (const b of dlgAdd.querySelectorAll('.n-tab')) {
+      const on = b.dataset.tab === tab;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-selected', String(on));
+    }
+    for (const p of dlgAdd.querySelectorAll('[data-pane]')) p.hidden = p.dataset.pane !== tab;
+    $('nDlgAddTitle').textContent = { one: '添加账号', bulk: '批量导入', quick: '临时出码' }[tab];
+    const focus = { one: 'nAddLabel', bulk: 'nBulk', quick: 'nQuickSecret' }[tab];
+    setTimeout(() => $(focus).focus(), 0);
+  }
+  for (const b of dlgAdd.querySelectorAll('.n-tab')) b.onclick = () => setTab(b.dataset.tab);
+  function openAdd(tab, preset) {
+    const g = currentGroupId();
+    fillGroups($('nAddGroup'), g);
+    fillGroups($('nBulkGroup'), g);
+    $('nAddFav').checked = filter === 'fav' && !query.trim();
+    showErr('nAddErr'); showErr('nBulkErr'); showErr('nQuickErr');
+    if (preset) { $('nAddLabel').value = preset.label || ''; $('nAddSecret').value = preset.secret || ''; }
+    if (!dlgAdd.open) dlgAdd.showModal();
+    setTab(tab);
+  }
+  dlgAdd.addEventListener('close', () => {
+    // 临时出码不留痕：关闭后清掉地址栏里的密钥
+    if (/secret=/.test(location.hash)) { try { history.replaceState(null, '', location.pathname + location.search); } catch (_) {} }
+    quick = null;
+    $('nQuickRes').hidden = true;
+  });
+
+  function addAccount() {
+    const parsed = parseSecretInput($('nAddSecret').value);
+    if (!parsed) { showErr('nAddErr', '密钥无效：请使用 Base32（A–Z / 2–7）或完整的 otpauth:// 链接'); return; }
+    const label = ($('nAddLabel').value.trim() || parsed.label || '').trim();
+    if (accounts.some((x) => x.secret === parsed.secret && (x.label || '') === label)) { showErr('nAddErr', '这个账号已经在列表里了'); return; }
+    const acc = { secret: parsed.secret, label, groupId: $('nAddGroup').value };
+    if ($('nAddFav').checked) acc.fav = true;
+    accounts.push(acc);
+    saveBoard();
+    $('nAddLabel').value = ''; $('nAddSecret').value = '';
+    dlgAdd.close();
+    render();
+    toast('已添加「' + (label || '未命名') + '」');
+  }
+  $('nAddOk').onclick = addAccount;
+  $('nAddLabel').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); $('nAddSecret').focus(); } });
+  $('nAddSecret').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); addAccount(); } });
+  $('nAddSecret').addEventListener('input', () => {
+    // 粘贴 otpauth 链接时自动带出名称
+    const p = parseSecretInput($('nAddSecret').value);
+    if (p && p.label && !$('nAddLabel').value.trim()) $('nAddLabel').value = p.label;
+  });
+
+  $('nBulkOk').onclick = () => {
+    const groupId = $('nBulkGroup').value;
+    let n = 0, bad = 0;
+    for (const line of $('nBulk').value.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      const acc = parseSecretInput(line);
+      if (!acc) { bad++; continue; }
+      if (accounts.some((x) => x.secret === acc.secret && (x.label || '') === acc.label)) continue;
+      acc.groupId = groupId;
+      accounts.push(acc); n++;
+    }
+    if (!n) { showErr('nBulkErr', bad ? '没有识别到有效账号（' + bad + ' 行无效）' : '没有新账号（可能都已存在）'); return; }
+    saveBoard();
+    $('nBulk').value = '';
+    dlgAdd.close();
+    render();
+    toast('已导入 ' + n + ' 个账号' + (bad ? '，' + bad + ' 行无效已跳过' : ''));
+  };
+
+  function runQuick() {
+    const parsed = parseSecretInput($('nQuickSecret').value);
+    if (!parsed) { showErr('nQuickErr', '密钥无效：请使用 Base32（A–Z / 2–7）'); $('nQuickRes').hidden = true; quick = null; return; }
+    showErr('nQuickErr');
+    parsed.label = ($('nQuickLabel').value.trim() || parsed.label || '').trim();
+    if (!$('nQuickLabel').value.trim() && parsed.label) $('nQuickLabel').value = parsed.label;
+    quick = parsed;
+    $('nQuickCode').dataset.secret = parsed.secret;
+    $('nQuickRes').hidden = false;
+    paintCodes();
+    ensureCodes();
+    tick();
+  }
+  $('nQuickGo').onclick = runQuick;
+  $('nQuickSecret').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); runQuick(); } });
+  $('nQuickCode').onclick = () => { if (quick) copyAccount(quick, $('nQuickCode')); };
+  $('nQuickBm').onclick = () => quick && copyText(bookmarkUrl(quick)).then(() => toast('书签链接已复制（含密钥，请妥善保存）'));
+  $('nQuickOtp').onclick = () => quick && copyText(otpauthUrl(quick)).then(() => toast('otpauth 链接已复制'));
+  $('nQuickQr').onclick = () => quick && openQr(quick);
+  $('nQuickSave').onclick = () => { if (quick) openAdd('one', quick); };
+
+  /* ---------- 编辑 ---------- */
+  const dlgEdit = $('nDlgEdit');
+  let editing = null;
+  function openEdit(a) {
+    editing = a;
+    $('nEditLabel').value = a.label || '';
+    $('nEditSecret').value = a.secret || '';
+    fillGroups($('nEditGroup'), gid(a));
+    $('nEditFav').checked = !!a.fav;
+    showErr('nEditErr');
+    dlgEdit.showModal();
+    $('nEditLabel').focus();
+  }
+  $('nEditOk').onclick = () => {
+    if (!editing || !accounts.includes(editing)) { dlgEdit.close(); return; }
+    const parsed = parseSecretInput($('nEditSecret').value);
+    if (!parsed) { showErr('nEditErr', '密钥无效：请使用 Base32（A–Z / 2–7）'); return; }
+    editing.secret = parsed.secret;
+    editing.label = $('nEditLabel').value.trim() || parsed.label || editing.label || '';
+    editing.groupId = $('nEditGroup').value;
+    if ($('nEditFav').checked) editing.fav = true; else delete editing.fav;
+    saveBoard();
+    dlgEdit.close();
+    render();
+    toast('已保存');
+  };
+  $('nEditLabel').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); $('nEditOk').click(); } });
+  $('nEditDel').onclick = () => {
+    if (!editing) return;
+    if (!confirm('删除「' + (editing.label || '未命名') + '」？此操作不可撤销。')) return;
+    accounts = accounts.filter((x) => x !== editing);
+    saveBoard();
+    dlgEdit.close();
+    render();
+    toast('已删除');
+  };
+
+  /* ---------- 二维码 ---------- */
+  const dlgQr = $('nDlgQr');
+  let qrAcc = null;
+  function openQr(a) {
+    const url = otpauthUrl(a);
+    const data = makeQrDataUrl(url);
+    if (!data) { toast('二维码库未加载，请刷新页面', true); return; }
+    qrAcc = a;
+    $('nQrTitle').textContent = (a.label || '账号') + ' · 二维码';
+    $('nQrImg').src = data;
+    $('nQrText').textContent = url;
+    dlgQr.showModal();
+  }
+  $('nQrCopy').onclick = () => qrAcc && copyText(otpauthUrl(qrAcc)).then(() => toast('otpauth 链接已复制'));
+
+  /* ---------- 节拍 ---------- */
+  function tick() {
+    const now = Date.now() / 1000;
+    const left = PERIOD - (now % PERIOD);
+    const secs = Math.max(1, Math.ceil(left));
+    $('nSec').textContent = String(secs);
+    $('nRingFg').style.strokeDashoffset = String(RING * (1 - left / PERIOD));
+    app.classList.toggle('urgent', secs <= 5);
+    app.classList.toggle('soon', secs <= 8);
+    $('nQuickSec').textContent = secs + ' 秒后刷新';
+    if (Math.floor(now / PERIOD) !== curCounter) paintCodes();
+    ensureCodes();
+  }
+  setInterval(tick, 250);
+
+  // 其他标签页（包括旧版）改了数据时同步过来
+  window.addEventListener('storage', (e) => {
+    if (e.key === K_BOARD || e.key === K_GROUPS) { loadData(); render(); }
+  });
+
+  render();
+  tick();
+
+  // 兼容旧版书签链接：#secret=xxx&label=yyy 打开即出码
+  (function loadHash() {
+    const raw = (location.hash || '').replace(/^#/, '');
+    if (!raw) return;
+    const parsed = parseSecretInput(raw.includes('secret=') ? raw : 'secret=' + raw);
+    if (!parsed) return;
+    const saved = accounts.find((a) => a.secret === parsed.secret);
+    openAdd('quick');
+    $('nQuickSecret').value = parsed.secret;
+    $('nQuickLabel').value = parsed.label || (saved && saved.label) || '';
+    runQuick();
+  })();
+})();
