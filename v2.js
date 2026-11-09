@@ -123,13 +123,15 @@
   const prefs = readJSON(K_PREFS, {}) || {};
   let filter = typeof prefs.filter === 'string' ? prefs.filter : 'all';
   let sort = ['custom', 'recent', 'name'].includes(prefs.sort) ? prefs.sort : 'custom';
-  const savePrefs = () => writeJSON(K_PREFS, { filter, sort });
+  let mask = !!prefs.mask;
+  const savePrefs = () => writeJSON(K_PREFS, { filter, sort, mask });
 
   let query = '';
   let visible = [];      // 当前渲染顺序里的账号
   let activeIdx = -1;    // 键盘选中行
   let quick = null;      // 临时出码的账号（不保存）
   let dragging = false;  // 正在拖动排序
+  let lastDragEnd = 0;   // 刚拖完的一瞬间不要当成点击
   let canSort = false;   // 当前视图是否允许拖动（默认顺序且不在搜索中）
 
   const gid = (a) => (a.groupId && groups.some((g) => g.id === a.groupId) ? a.groupId : '');
@@ -155,6 +157,8 @@
     bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7Z"/>',
     upload: '<path d="M12 15V3M7 8l5-5 5 5M5 21h14"/>',
     trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>',
+    eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
+    eyeoff: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path d="M3 3l18 18"/>',
     grip: '<path d="M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01"/>',
   };
   const svg = (p, s) => '<svg viewBox="0 0 24 24" width="' + (s || 16) + '" height="' + (s || 16) +
@@ -195,6 +199,7 @@
       <div class="n-main-head">
         <div><h2 id="nTitle"></h2><span class="n-count" id="nCount"></span></div>
         <div class="n-head-right">
+          <button type="button" class="n-btn" id="nMask" aria-pressed="false" title="隐藏 / 显示所有验证码（鼠标所在或选中的那行仍会显示）"></button>
           <select class="n-select" id="nSort" aria-label="排序">
             <option value="custom">默认顺序</option>
             <option value="recent">最近使用</option>
@@ -207,7 +212,7 @@
         </div>
       </div>
       <div class="n-list" id="nList"></div>
-      <p class="n-tip">快捷键：<kbd>/</kbd> 搜索 · <kbd>↑</kbd><kbd>↓</kbd> 选择 · <kbd>Enter</kbd> 复制验证码 · <kbd>Esc</kbd> 清空搜索。点击验证码即可复制，点 ☆ 收藏到「常用」。按住左侧 ⋮⋮ 拖动调整顺序，拖到左边的分组上可换分组。</p>
+      <p class="n-tip">快捷键：<kbd>/</kbd> 搜索 · <kbd>↑</kbd><kbd>↓</kbd> 选择 · <kbd>Enter</kbd> 复制验证码 · <kbd>Esc</kbd> 清空搜索。点任意一行即可复制验证码，点 ☆ 收藏到「常用」。按住左侧 ⋮⋮ 拖动调整顺序，拖到左边的分组上可换分组。</p>
     </main>
   </div>
 
@@ -300,6 +305,14 @@
     return e;
   };
   const app = $('nApp');
+  function renderMask() {
+    app.classList.toggle('n-mask', mask);
+    const b = $('nMask');
+    b.setAttribute('aria-pressed', String(mask));
+    b.innerHTML = svg(mask ? 'eyeoff' : 'eye', 15) + '<span>' + (mask ? '码已隐藏' : '隐藏验证码') + '</span>';
+  }
+  $('nMask').onclick = () => { mask = !mask; savePrefs(); renderMask(); };
+  renderMask();
   const qInput = $('nQ');
 
   /* ---------- 提示条 ---------- */
@@ -357,8 +370,10 @@
       toast('已复制「' + (a.label || '未命名') + '」 ' + fmt(code));
       if (accounts.includes(a)) { a.used = Date.now(); saveBoard(); }
       if (codeEl) {
+        const rowEl = codeEl.closest('.n-row');
         codeEl.classList.add('copied');
-        setTimeout(() => codeEl.classList.remove('copied'), 900);
+        if (rowEl) rowEl.classList.add('n-flash');
+        setTimeout(() => { codeEl.classList.remove('copied'); if (rowEl) rowEl.classList.remove('n-flash'); }, 1000);
       }
     }).catch(() => toast('复制失败，请检查浏览器剪贴板权限或使用 HTTPS', true));
   }
@@ -564,7 +579,12 @@
       row.appendChild(grip);
     }
     row.append(star, info, box, acts);
-    row.addEventListener('click', (e) => { if (!e.target.closest('button')) setActive(vi, false); });
+    // 点整行（名称、空白处都行）就复制验证码；星标、手柄、操作按钮各管各的
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('button') || Date.now() - lastDragEnd < 400) return;
+      setActive(vi, false);
+      copyAccount(a, code);
+    });
     return row;
   }
 
@@ -762,6 +782,7 @@
       window.removeEventListener('pointercancel', onCancel);
       window.removeEventListener('keydown', onKey, true);
       dragging = false;
+      lastDragEnd = Date.now();
       list.classList.remove('n-sorting');
       document.body.classList.remove('n-grabbing');
       row.style.transform = '';
