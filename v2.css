@@ -442,3 +442,6 @@ body.n-grabbing, body.n-grabbing * { cursor: grabbing !important; -webkit-user-s
 #v2 .n-envrow { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--n-line); }
 #v2 .n-envrow .n-spacer { margin-right: auto; }
 #v2 .n-envrow .n-btn { height: 30px; padding: 0 10px; font-size: 12px; }
+
+#v2 .n-seg-tool { color: var(--n-faint); font-weight: 500; padding: 0 8px; }
+#v2 .n-seg-tool:hover { color: var(--n-accent, #2563eb); }
