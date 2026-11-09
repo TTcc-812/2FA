@@ -129,6 +129,8 @@
   let visible = [];      // 当前渲染顺序里的账号
   let activeIdx = -1;    // 键盘选中行
   let quick = null;      // 临时出码的账号（不保存）
+  let dragging = false;  // 正在拖动排序
+  let canSort = false;   // 当前视图是否允许拖动（默认顺序且不在搜索中）
 
   const gid = (a) => (a.groupId && groups.some((g) => g.id === a.groupId) ? a.groupId : '');
   const groupName = (id) => (id ? (groups.find((g) => g.id === id) || {}).name || '' : '未分组');
@@ -153,6 +155,7 @@
     bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7Z"/>',
     upload: '<path d="M12 15V3M7 8l5-5 5 5M5 21h14"/>',
     trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>',
+    grip: '<path d="M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01"/>',
   };
   const svg = (p, s) => '<svg viewBox="0 0 24 24" width="' + (s || 16) + '" height="' + (s || 16) +
     '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + P[p] + '</svg>';
@@ -204,7 +207,7 @@
         </div>
       </div>
       <div class="n-list" id="nList"></div>
-      <p class="n-tip">快捷键：<kbd>/</kbd> 搜索 · <kbd>↑</kbd><kbd>↓</kbd> 选择 · <kbd>Enter</kbd> 复制验证码 · <kbd>Esc</kbd> 清空搜索。点击验证码即可复制，点 ☆ 收藏到「常用」。</p>
+      <p class="n-tip">快捷键：<kbd>/</kbd> 搜索 · <kbd>↑</kbd><kbd>↓</kbd> 选择 · <kbd>Enter</kbd> 复制验证码 · <kbd>Esc</kbd> 清空搜索。点击验证码即可复制，点 ☆ 收藏到「常用」。按住左侧 ⋮⋮ 拖动调整顺序，拖到左边的分组上可换分组。</p>
     </main>
   </div>
 
@@ -492,6 +495,7 @@
     visible.push(a);
     const row = el('div', 'n-row');
     row.dataset.vi = String(vi);
+    row._acc = a;
 
     const star = el('button', 'n-star' + (a.fav ? ' on' : ''), a.fav ? '★' : '☆');
     star.type = 'button';
@@ -549,6 +553,16 @@
       act('edit', '编辑 / 删除', () => openEdit(a))
     );
 
+    if (canSort) {
+      const grip = el('button', 'n-grip');
+      grip.type = 'button';
+      grip.title = '按住拖动排序，可拖到左侧分组上换分组';
+      grip.setAttribute('aria-label', '拖动排序');
+      grip.innerHTML = svg('grip', 16);
+      grip.addEventListener('pointerdown', (ev) => startDrag(ev, row, a));
+      grip.addEventListener('contextmenu', (ev) => ev.preventDefault());
+      row.appendChild(grip);
+    }
     row.append(star, info, box, acts);
     row.addEventListener('click', (e) => { if (!e.target.closest('button')) setActive(vi, false); });
     return row;
@@ -577,6 +591,8 @@
     const q = query.trim().toLowerCase();
     $('nSort').value = sort;
     $('nQClear').hidden = !query;
+    canSort = sort === 'custom' && !q;
+    list.classList.toggle('n-can-sort', canSort);
 
     let title, items;
     if (q) {
@@ -621,6 +637,7 @@
         hb.onclick = () => setFilter('g:' + id);
         head.appendChild(hb);
         const rows = el('div', 'n-rows');
+        rows.dataset.gid = id;
         for (const a of sec) rows.appendChild(buildRow(a, false, ''));
         wrap.append(head, rows);
         list.appendChild(wrap);
@@ -659,6 +676,132 @@
     copyAccount(a, row && row.querySelector('.n-code'));
   }
 
+  /* ---------- 拖动排序 ---------- */
+  // 按住行最左边的 ⋮⋮ 拖动：其他行实时让位；拖到别的分组区块里会换分组；
+  // 拖到左侧「常用 / 分组」导航上松手 = 加入常用 / 移到该分组。鼠标和触屏都能用，Esc 取消。
+  function startDrag(e, row, a) {
+    if (dragging || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    e.preventDefault();
+    dragging = true;
+    const list = $('nList');
+    const pid = e.pointerId;
+    const grab = e.clientY - row.getBoundingClientRect().top;
+    let px = e.clientX, py = e.clientY, navF = null, navEl = null, raf = 0;
+    row.classList.add('n-dragging');
+    list.classList.add('n-sorting');
+    document.body.classList.add('n-grabbing');
+
+    function pickContainer() {
+      let best = null, bd = Infinity;
+      for (const c of list.querySelectorAll('.n-rows')) {
+        const r = c.getBoundingClientRect();
+        const d = py < r.top ? r.top - py : py > r.bottom ? py - r.bottom : 0;
+        if (d < bd) { bd = d; best = c; }
+      }
+      return best;
+    }
+    function reorder() {
+      const c = pickContainer();
+      if (!c) return;
+      let ref = null;
+      for (const s of c.children) {
+        if (s === row) continue;
+        const r = s.getBoundingClientRect();
+        if (py < r.top + r.height / 2) { ref = s; break; }
+      }
+      const same = row.parentNode === c && (ref ? row.nextElementSibling === ref : row === c.lastElementChild);
+      if (same) return;
+      const others = [...list.querySelectorAll('.n-row')].filter((x) => x !== row);
+      const before = new Map(others.map((x) => [x, x.getBoundingClientRect().top]));
+      c.insertBefore(row, ref);
+      for (const x of others) {
+        const d = before.get(x) - x.getBoundingClientRect().top;
+        if (d) x.animate([{ transform: 'translateY(' + d + 'px)' }, { transform: 'none' }], { duration: 150, easing: 'ease-out' });
+      }
+    }
+    function hoverNav() {
+      const t = document.elementFromPoint(px, py);
+      const nav = t && t.closest ? t.closest('.n-nav') : null;
+      let f = null;
+      if (nav) {
+        const nf = nav.dataset.f || '';
+        if (nf === 'fav' ? !a.fav : (nf.startsWith('g:') && nf.slice(2) !== gid(a))) f = nf;
+      }
+      const target = f ? nav : null;
+      if (target !== navEl) {
+        if (navEl) navEl.classList.remove('n-drop');
+        if (target) target.classList.add('n-drop');
+        navEl = target;
+      }
+      navF = f;
+    }
+    function frame() {
+      // 靠近窗口上下边缘时自动滚动
+      const top = 120, bot = window.innerHeight - 56;
+      if (py < top) window.scrollBy(0, -Math.min(18, (top - py) / 5));
+      else if (py > bot) window.scrollBy(0, Math.min(18, (py - bot) / 5));
+      hoverNav();
+      if (!navF) reorder();
+      row.style.transform = '';
+      row.style.transform = 'translateY(' + (py - grab - row.getBoundingClientRect().top) + 'px)';
+      raf = requestAnimationFrame(frame);
+    }
+    function onMove(ev) { if (ev.pointerId === pid) { px = ev.clientX; py = ev.clientY; } }
+    function onUp(ev) { if (ev.pointerId === pid) finish(false); }
+    function onCancel(ev) { if (ev.pointerId === pid) finish(true); }
+    function onKey(ev) { if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); finish(true); } }
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+    window.addEventListener('keydown', onKey, true);
+
+    function finish(cancel) {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('keydown', onKey, true);
+      dragging = false;
+      list.classList.remove('n-sorting');
+      document.body.classList.remove('n-grabbing');
+      row.style.transform = '';
+      if (navEl) navEl.classList.remove('n-drop');
+      if (cancel) { render(); return; }
+      let msg = '';
+      if (navF) {
+        const idx = accounts.indexOf(a);
+        if (idx >= 0) {
+          if (navF === 'fav') { a.fav = true; msg = '已加入「常用」'; }
+          else {
+            a.groupId = navF.slice(2);
+            accounts.splice(idx, 1);
+            accounts.push(a);
+            msg = '已移到「' + groupName(navF.slice(2)) + '」';
+          }
+        }
+      } else {
+        // 把当前可见账号按新的显示顺序，重新填回它们原来占的位置；跨区块拖动则同时换分组
+        const els = [...list.querySelectorAll('.n-row')];
+        const seq = els.map((r) => r._acc);
+        const slots = seq.map((x) => accounts.indexOf(x));
+        if (!slots.includes(-1)) {
+          slots.sort((p, q) => p - q);
+          for (const r of els) {
+            const g = r.parentNode.dataset.gid;
+            if (g !== undefined && g !== gid(r._acc)) r._acc.groupId = g;
+          }
+          seq.forEach((x, i) => { accounts[slots[i]] = x; });
+        }
+      }
+      saveBoard();
+      render();
+      activeIdx = visible.indexOf(a);
+      updateActive(false);
+      if (msg) toast(msg);
+    }
+    frame();
+  }
+
   /* ---------- 搜索与快捷键 ---------- */
   function onQuery() {
     query = qInput.value;
@@ -678,7 +821,7 @@
   });
   $('nQClear').onclick = () => { qInput.value = ''; onQuery(); qInput.focus(); };
   document.addEventListener('keydown', (e) => {
-    if (root.querySelector('dialog[open]') || e.isComposing) return;
+    if (dragging || root.querySelector('dialog[open]') || e.isComposing) return;
     const t = e.target;
     const typing = t && t.closest && t.closest('input, textarea, select, [contenteditable="true"]');
     if ((e.key === 'k' || e.key === 'K') && (e.metaKey || e.ctrlKey)) { e.preventDefault(); qInput.focus(); qInput.select(); return; }
@@ -901,7 +1044,7 @@
 
   // 其他标签页（包括旧版）改了数据时同步过来
   window.addEventListener('storage', (e) => {
-    if (e.key === K_BOARD || e.key === K_GROUPS) { loadData(); render(); }
+    if (!dragging && (e.key === K_BOARD || e.key === K_GROUPS)) { loadData(); render(); }
   });
 
   render();
