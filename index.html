@@ -11,10 +11,10 @@
 <link rel="stylesheet" href="./style.css">
 <link rel="stylesheet" href="./v2.css">
 <script>
-  /* 新旧界面切换：默认新版；localStorage simple2fa.ui = "v1" 时用旧版。提前设置避免闪烁。 */
+  /* 新旧界面切换：默认旧版；localStorage simple2fa.ui = "v2" 时用新版。提前设置避免闪烁。 */
   (function () {
-    var ui = 'v2';
-    try { if (localStorage.getItem('simple2fa.ui') === 'v1') ui = 'v1'; } catch (e) {}
+    var ui = 'v1';
+    try { if (localStorage.getItem('simple2fa.ui') === 'v2') ui = 'v2'; } catch (e) {}
     document.documentElement.setAttribute('data-ui', ui);
   })();
 </script>
