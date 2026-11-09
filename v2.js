@@ -11,6 +11,9 @@
   const K_UI = 'simple2fa.ui';
   const K_PREFS = 'simple2fa.v2prefs';
   const PERIOD = 30;
+  const ENV = { prod: '正式', test: '测试' };
+  // 名称里带这些词的，自动当成测试环境（只是默认值，可以手动改）
+  const looksTest = (t) => /测试|沙盒|(^|[^a-z])(test|testing|sandbox)([^a-z]|$)/i.test(t || '');
   const RING = 97.39; // 2π × 15.5
 
   /* ---------- TOTP ---------- */
@@ -104,6 +107,7 @@
     accounts = readJSON(K_BOARD, []);
     if (!Array.isArray(accounts)) accounts = [];
     accounts = accounts.filter((a) => a && typeof a.secret === 'string');
+    for (const a of accounts) if (a.env && !ENV[a.env]) delete a.env;
     groups = readJSON(K_GROUPS, []);
     if (!Array.isArray(groups)) groups = [];
     groups = groups.filter((g) => g && typeof g.id === 'string' && typeof g.name === 'string');
@@ -117,6 +121,13 @@
     }
   }
   loadData();
+  // 第一次升级到带「环境」的版本：名称里带「测试 / test」的账号自动标成测试，其余不动
+  if (localStorage.getItem('simple2fa.envDetectV1') !== '1') {
+    let n = 0;
+    for (const a of accounts) if (!a.env && looksTest(a.label)) { a.env = 'test'; n++; }
+    if (n) writeJSON(K_BOARD, accounts);
+    try { localStorage.setItem('simple2fa.envDetectV1', '1'); } catch (_) {}
+  }
   const saveBoard = () => writeJSON(K_BOARD, accounts);
   const saveGroups = () => writeJSON(K_GROUPS, groups);
 
@@ -124,7 +135,9 @@
   let filter = typeof prefs.filter === 'string' ? prefs.filter : 'all';
   let sort = ['custom', 'recent', 'name'].includes(prefs.sort) ? prefs.sort : 'custom';
   let mask = !!prefs.mask;
-  const savePrefs = () => writeJSON(K_PREFS, { filter, sort, mask });
+  let envFilter = ['all', 'prod', 'test'].includes(prefs.env) ? prefs.env : 'all';
+  const savePrefs = () => writeJSON(K_PREFS, { filter, sort, mask, env: envFilter });
+  const envOk = (a) => envFilter === 'all' || a.env === envFilter;
 
   let query = '';
   let visible = [];      // 当前渲染顺序里的账号
@@ -211,8 +224,9 @@
           </div>
         </div>
       </div>
+      <div class="n-envbar" id="nEnv" role="tablist" aria-label="环境筛选"></div>
       <div class="n-list" id="nList"></div>
-      <p class="n-tip">快捷键：<kbd>/</kbd> 搜索 · <kbd>↑</kbd><kbd>↓</kbd> 选择 · <kbd>Enter</kbd> 复制验证码 · <kbd>Esc</kbd> 清空搜索。点任意一行即可复制验证码，点 ☆ 收藏到「常用」。按住左侧 ⋮⋮ 拖动调整顺序，拖到左边的分组上可换分组。</p>
+      <p class="n-tip">快捷键：<kbd>/</kbd> 搜索 · <kbd>↑</kbd><kbd>↓</kbd> 选择 · <kbd>Enter</kbd> 复制验证码 · <kbd>Esc</kbd> 清空搜索。点任意一行即可复制验证码，点 ☆ 收藏到「常用」。按住左侧 ⋮⋮ 拖动调整顺序，拖到左边的分组上可换分组。给账号标上「正式 / 测试」后，用上方的切换条一键筛选；把一行拖到「正式 / 测试」上也能直接标记。</p>
     </main>
   </div>
 
@@ -227,10 +241,9 @@
       <div class="n-dlg-body">
         <div class="n-field"><label for="nAddLabel">账号名称</label><input class="n-input" id="nAddLabel" placeholder="例如 GitHub" spellcheck="false" autocomplete="off"></div>
         <div class="n-field"><label for="nAddSecret">密钥 / SECRET</label><textarea class="n-input" id="nAddSecret" rows="2" placeholder="Base32 密钥，或 otpauth:// 链接（会自动识别名称）" spellcheck="false" autocomplete="off"></textarea></div>
-        <div class="n-grid2 n-field">
-          <div><label class="n-label" for="nAddGroup">所属分组</label><select class="n-input" id="nAddGroup"></select></div>
-          <label class="n-check"><input type="checkbox" id="nAddFav"> 加入「常用」</label>
-        </div>
+        <div class="n-field"><div class="n-label">所属分组</div><div class="n-chips" id="nAddGroup" role="radiogroup" aria-label="所属分组"></div></div>
+        <div class="n-field"><div class="n-label">环境</div><div class="n-chips" id="nAddEnv" role="radiogroup" aria-label="环境"></div></div>
+        <div class="n-field"><label class="n-check"><input type="checkbox" id="nAddFav"> 加入「常用」</label></div>
         <div class="n-err" id="nAddErr" hidden></div>
       </div>
       <div class="n-dlg-foot"><button type="button" class="n-btn" data-close>取消</button><button type="button" class="n-btn n-primary" id="nAddOk">添加</button></div>
@@ -238,7 +251,8 @@
     <div data-pane="bulk">
       <div class="n-dlg-body">
         <div class="n-field"><label for="nBulk">每行一个</label><textarea class="n-input" id="nBulk" rows="6" placeholder="密钥&#10;otpauth://totp/GitHub?secret=…&#10;#secret=xxx&amp;label=名称" spellcheck="false"></textarea></div>
-        <div class="n-field"><label for="nBulkGroup">导入到分组</label><select class="n-input" id="nBulkGroup"></select></div>
+        <div class="n-field"><div class="n-label">导入到分组</div><div class="n-chips" id="nBulkGroup" role="radiogroup" aria-label="导入到分组"></div></div>
+        <div class="n-field"><div class="n-label">环境（不标记时，名称带「测试」的会自动标成测试）</div><div class="n-chips" id="nBulkEnv" role="radiogroup" aria-label="环境"></div></div>
         <div class="n-err" id="nBulkErr" hidden></div>
       </div>
       <div class="n-dlg-foot"><button type="button" class="n-btn" data-close>取消</button><button type="button" class="n-btn n-primary" id="nBulkOk">导入</button></div>
@@ -271,10 +285,9 @@
     <div class="n-dlg-body">
       <div class="n-field"><label for="nEditLabel">账号名称</label><input class="n-input" id="nEditLabel" spellcheck="false" autocomplete="off"></div>
       <div class="n-field"><label for="nEditSecret">密钥 / SECRET</label><input class="n-input" id="nEditSecret" spellcheck="false" autocomplete="off" style="font-family:var(--n-mono);font-size:13px"></div>
-      <div class="n-grid2 n-field">
-        <div><label class="n-label" for="nEditGroup">所属分组</label><select class="n-input" id="nEditGroup"></select></div>
-        <label class="n-check"><input type="checkbox" id="nEditFav"> 常用</label>
-      </div>
+      <div class="n-field"><div class="n-label">所属分组</div><div class="n-chips" id="nEditGroup" role="radiogroup" aria-label="所属分组"></div></div>
+      <div class="n-field"><div class="n-label">环境</div><div class="n-chips" id="nEditEnv" role="radiogroup" aria-label="环境"></div></div>
+      <div class="n-field"><label class="n-check"><input type="checkbox" id="nEditFav"> 常用</label></div>
       <div class="n-err" id="nEditErr" hidden></div>
     </div>
     <div class="n-dlg-foot">
@@ -367,7 +380,7 @@
     const code = currentCode(a.secret);
     if (!code) { toast(codes.get(a.secret) && codes.get(a.secret).code === null ? '密钥无效，请编辑后重试' : '验证码尚未生成，请稍后重试', true); return; }
     copyText(code).then(() => {
-      toast('已复制「' + (a.label || '未命名') + '」 ' + fmt(code));
+      toast('已复制「' + (a.label || '未命名') + '」' + (a.env ? '（' + ENV[a.env] + '）' : '') + ' ' + fmt(code));
       if (accounts.includes(a)) { a.used = Date.now(); saveBoard(); }
       if (codeEl) {
         const rowEl = codeEl.closest('.n-row');
@@ -407,10 +420,10 @@
   function renderSide() {
     const side = $('nSide');
     side.replaceChildren();
-    const cnt = (fn) => accounts.filter(fn).length;
+    const cnt = (fn) => accounts.filter((a) => envOk(a) && fn(a)).length;
     side.append(
       navBtn('fav', '★', '常用', cnt((a) => a.fav)),
-      navBtn('all', svg('list'), '全部账号', accounts.length)
+      navBtn('all', svg('list'), '全部账号', cnt(() => true))
     );
     const title = el('div', 'n-side-title');
     title.append(el('span', '', '分组'), miniBtn(svg('plus', 14), '新建分组', newGroup));
@@ -442,16 +455,21 @@
     savePrefs();
     render();
   }
-  function newGroup() {
+  function makeGroup() {
     const v = prompt('新分组名称', '');
-    if (v === null) return;
+    if (v === null) return null;
     const name = v.trim();
-    if (!name || groups.some((g) => g.name === name)) { toast('分组名称不能为空或重复', true); return; }
+    if (!name || groups.some((g) => g.name === name)) { toast('分组名称不能为空或重复', true); return null; }
     const g = { id: 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), name };
     groups.push(g);
     saveGroups();
+    return g;
+  }
+  function newGroup() {
+    const g = makeGroup();
+    if (!g) return;
     setFilter('g:' + g.id);
-    toast('已创建分组「' + name + '」');
+    toast('已创建分组「' + g.name + '」');
   }
   function renameGroup(g) {
     const v = prompt('分组名称', g.name);
@@ -479,30 +497,40 @@
     if (sort === 'recent') return list.slice().sort((a, b) => (b.used || 0) - (a.used || 0));
     return list;
   }
-  function searchList(q) {
+  // 搜索：空格分隔多个词，每个词都要命中（名称 / 分组名 / 环境），例如「github 测试」
+  function searchList(tokens) {
     const scored = [];
     accounts.forEach((a, i) => {
       const name = (a.label || '').toLowerCase();
       const grp = groupName(gid(a)).toLowerCase();
-      let s = -1;
-      if (name === q) s = 0;
-      else if (name.startsWith(q)) s = 1;
-      else if (name.includes(q)) s = 2;
-      else if (grp.includes(q)) s = 3;
-      if (s >= 0) scored.push({ a, s, i });
+      const env = a.env ? (ENV[a.env] + ' ' + a.env) : '';
+      let worst = 0;
+      for (const t of tokens) {
+        const s = name === t ? 0 : name.startsWith(t) ? 1 : name.includes(t) ? 2 : (grp.includes(t) || env.includes(t)) ? 3 : -1;
+        if (s < 0) { worst = -1; break; }
+        worst = Math.max(worst, s);
+      }
+      if (worst >= 0) scored.push({ a, s: worst, i });
     });
     scored.sort((x, y) => x.s - y.s || (sort === 'recent' ? (y.a.used || 0) - (x.a.used || 0) : 0) || x.i - y.i);
     return scored.map((x) => x.a);
   }
-  function highlight(node, text, q) {
-    if (!q) { node.textContent = text; return; }
+  function highlight(node, text, tokens) {
+    if (!tokens || !tokens.length) { node.textContent = text; return; }
     const lower = text.toLowerCase();
-    let from = 0, at;
-    while ((at = lower.indexOf(q, from)) >= 0) {
-      node.append(text.slice(from, at), el('mark', '', text.slice(at, at + q.length)));
-      from = at + q.length;
+    const marks = new Uint8Array(text.length);
+    for (const t of tokens) {
+      if (!t) continue;
+      let at = -1;
+      while ((at = lower.indexOf(t, at + 1)) >= 0) marks.fill(1, at, at + t.length);
     }
-    node.append(text.slice(from));
+    for (let i = 0; i < text.length;) {
+      let j = i;
+      while (j < text.length && marks[j] === marks[i]) j++;
+      const seg = text.slice(i, j);
+      node.append(marks[i] ? el('mark', '', seg) : seg);
+      i = j;
+    }
   }
 
   function buildRow(a, showGroup, q) {
@@ -528,10 +556,16 @@
     };
 
     const info = el('div', 'n-info');
+    const nameRow = el('div', 'n-namerow');
     const name = el('div', 'n-name');
     name.title = a.label || '未命名';
     highlight(name, a.label || '未命名', q);
-    info.appendChild(name);
+    nameRow.appendChild(name);
+    if (a.env && ENV[a.env]) {
+      row.dataset.env = a.env;
+      nameRow.appendChild(el('span', 'n-env n-env-' + a.env, ENV[a.env]));
+    }
+    info.appendChild(nameRow);
     if (showGroup) {
       const sub = el('div', 'n-sub');
       const pill = el('span', 'n-pill');
@@ -588,6 +622,28 @@
     return row;
   }
 
+  function setEnv(v) {
+    envFilter = v;
+    activeIdx = -1;
+    savePrefs();
+    render();
+  }
+  function renderEnvBar(scope) {
+    const bar = $('nEnv');
+    bar.replaceChildren();
+    const n = (v) => scope.filter((a) => a.env === v).length;
+    for (const [v, label, count] of [['all', '全部', scope.length], ['prod', '正式', n('prod')], ['test', '测试', n('test')]]) {
+      const b = el('button', 'n-seg' + (envFilter === v ? ' on' : ''));
+      b.type = 'button';
+      b.dataset.env = v;
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', String(envFilter === v));
+      b.append(label, el('span', 'n-cnt', String(count)));
+      b.onclick = () => setEnv(v);
+      bar.appendChild(b);
+    }
+  }
+
   function emptyState(title, text, buttons) {
     const box = el('div', 'n-empty');
     box.append(el('b', '', title), el('p', '', text));
@@ -609,6 +665,7 @@
     list.replaceChildren();
     visible = [];
     const q = query.trim().toLowerCase();
+    const tokens = q ? q.split(/\s+/) : [];
     $('nSort').value = sort;
     $('nQClear').hidden = !query;
     canSort = sort === 'custom' && !q;
@@ -617,7 +674,7 @@
     let title, items;
     if (q) {
       title = '搜索“' + query.trim() + '”';
-      items = searchList(q);
+      items = searchList(tokens);
     } else if (filter === 'all') {
       title = '全部账号';
       items = accounts;
@@ -629,7 +686,10 @@
       title = groupName(id);
       items = sortList(accounts.filter((a) => gid(a) === id));
     }
-    $('nTitle').textContent = title;
+    const scope = items;
+    if (envFilter !== 'all') items = items.filter((a) => a.env === envFilter);
+    renderEnvBar(scope);
+    $('nTitle').textContent = title + (envFilter !== 'all' ? ' · ' + ENV[envFilter] : '');
     $('nCount').textContent = items.length + ' 个账号';
 
     if (!accounts.length) {
@@ -638,6 +698,8 @@
         ['批量导入', () => openAdd('bulk')],
         ['临时出码', () => openAdd('quick')],
       ]));
+    } else if (!items.length && envFilter !== 'all' && scope.length) {
+      list.appendChild(emptyState('这里没有「' + ENV[envFilter] + '」账号', '在账号的「编辑」里选择环境，或把一行拖到上面的「' + ENV[envFilter] + '」上，就会出现在这里。', [['查看全部环境', () => setEnv('all')]]));
     } else if (!items.length) {
       if (q) list.appendChild(emptyState('没有找到匹配的账号', '试试别的关键词，名称和分组名都能搜。', [['清空搜索', () => { qInput.value = ''; onQuery(); qInput.focus(); }]]));
       else if (filter === 'fav') list.appendChild(emptyState('还没有常用账号', '点击账号左侧的 ☆，就能把经常用的账号收藏到这里，打开就能找到。', [['查看全部账号', () => setFilter('all')]]));
@@ -658,14 +720,14 @@
         head.appendChild(hb);
         const rows = el('div', 'n-rows');
         rows.dataset.gid = id;
-        for (const a of sec) rows.appendChild(buildRow(a, false, ''));
+        for (const a of sec) rows.appendChild(buildRow(a, false, []));
         wrap.append(head, rows);
         list.appendChild(wrap);
       }
     } else {
       const rows = el('div', 'n-rows');
       const showGroup = !!q || filter === 'fav';
-      for (const a of items) rows.appendChild(buildRow(a, showGroup, q));
+      for (const a of items) rows.appendChild(buildRow(a, showGroup, tokens));
       list.appendChild(rows);
     }
     if (activeIdx >= visible.length) activeIdx = visible.length - 1;
@@ -741,11 +803,13 @@
     }
     function hoverNav() {
       const t = document.elementFromPoint(px, py);
-      const nav = t && t.closest ? t.closest('.n-nav') : null;
+      const nav = t && t.closest ? t.closest('.n-nav, .n-seg') : null;
       let f = null;
       if (nav) {
-        const nf = nav.dataset.f || '';
-        if (nf === 'fav' ? !a.fav : (nf.startsWith('g:') && nf.slice(2) !== gid(a))) f = nf;
+        const nf = nav.dataset.f || (nav.dataset.env ? 'env:' + nav.dataset.env : '');
+        if (nf === 'fav' ? !a.fav
+          : nf.startsWith('env:') ? (nf !== 'env:all' && nf.slice(4) !== (a.env || ''))
+          : (nf.startsWith('g:') && nf.slice(2) !== gid(a))) f = nf;
       }
       const target = f ? nav : null;
       if (target !== navEl) {
@@ -793,6 +857,7 @@
         const idx = accounts.indexOf(a);
         if (idx >= 0) {
           if (navF === 'fav') { a.fav = true; msg = '已加入「常用」'; }
+          else if (navF.startsWith('env:')) { a.env = navF.slice(4); msg = '已标记为「' + ENV[a.env] + '」'; }
           else {
             a.groupId = navF.slice(2);
             accounts.splice(idx, 1);
@@ -893,12 +958,53 @@
       if (e.target === dlg || e.target.closest('[data-close]')) dlg.close();
     });
   }
-  function fillGroups(select, selected) {
-    select.replaceChildren();
-    for (const g of [{ id: '', name: '未分组' }, ...groups]) {
-      const o = el('option', '', g.name); o.value = g.id; select.appendChild(o);
+  // 单选标签组：点一下就选中，不用展开下拉框。box.value 是当前选中的值。
+  function chipPicker(box, options, value, onNew) {
+    box.replaceChildren();
+    box.value = value;
+    const sync = () => {
+      for (const b of box.children) {
+        if (b.dataset.v === undefined) continue;
+        const on = b.dataset.v === box.value;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-checked', String(on));
+      }
+    };
+    for (const o of options) {
+      const b = el('button', 'n-chip' + (o.cls ? ' ' + o.cls : ''));
+      b.type = 'button';
+      b.setAttribute('role', 'radio');
+      b.dataset.v = o.v;
+      if (o.dot !== undefined) b.appendChild(dot(o.dot));
+      b.append(o.label);
+      b.onclick = () => { box.value = o.v; sync(); if (box.onpick) box.onpick(o.v); };
+      box.appendChild(b);
     }
-    select.value = groups.some((g) => g.id === selected) ? selected : '';
+    if (onNew) {
+      const add = el('button', 'n-chip n-chip-new', '＋ 新建分组');
+      add.type = 'button';
+      add.onclick = onNew;
+      box.appendChild(add);
+    }
+    sync();
+  }
+  const GROUP_BOXES = ['nAddGroup', 'nBulkGroup', 'nEditGroup'];
+  function fillGroups(box, selected) {
+    const cur = groups.some((g) => g.id === selected) ? selected : '';
+    chipPicker(box, [{ v: '', label: '未分组', dot: '' }, ...groups.map((g) => ({ v: g.id, label: g.name, dot: g.id }))], cur, () => {
+      const g = makeGroup();
+      if (!g) return;
+      for (const id of GROUP_BOXES) { const b = $(id); fillGroups(b, b === box ? g.id : b.value); }
+      renderSide();
+      toast('已创建分组「' + g.name + '」');
+    });
+  }
+  function fillEnv(box, selected) {
+    chipPicker(box, [
+      { v: '', label: '不标记' },
+      { v: 'prod', label: '正式', cls: 'n-chip-prod' },
+      { v: 'test', label: '测试', cls: 'n-chip-test' },
+    ], selected || '');
   }
   const currentGroupId = () => (filter.startsWith('g:') && !query.trim() ? filter.slice(2) : '');
 
@@ -916,13 +1022,23 @@
     setTimeout(() => $(focus).focus(), 0);
   }
   for (const b of dlgAdd.querySelectorAll('.n-tab')) b.onclick = () => setTab(b.dataset.tab);
+  let envTouched = false; // 手动选过环境后，不再按名称自动判断
+  $('nAddEnv').onpick = () => { envTouched = true; };
+  function autoEnv() {
+    if (envTouched) return;
+    fillEnv($('nAddEnv'), looksTest($('nAddLabel').value) ? 'test' : (envFilter === 'all' ? '' : envFilter));
+  }
+  $('nAddLabel').addEventListener('input', autoEnv);
   function openAdd(tab, preset) {
     const g = currentGroupId();
     fillGroups($('nAddGroup'), g);
     fillGroups($('nBulkGroup'), g);
+    envTouched = false;
+    fillEnv($('nAddEnv'), envFilter === 'all' ? '' : envFilter);
+    fillEnv($('nBulkEnv'), envFilter === 'all' ? '' : envFilter);
     $('nAddFav').checked = filter === 'fav' && !query.trim();
     showErr('nAddErr'); showErr('nBulkErr'); showErr('nQuickErr');
-    if (preset) { $('nAddLabel').value = preset.label || ''; $('nAddSecret').value = preset.secret || ''; }
+    if (preset) { $('nAddLabel').value = preset.label || ''; $('nAddSecret').value = preset.secret || ''; autoEnv(); }
     if (!dlgAdd.open) dlgAdd.showModal();
     setTab(tab);
   }
@@ -939,6 +1055,7 @@
     const label = ($('nAddLabel').value.trim() || parsed.label || '').trim();
     if (accounts.some((x) => x.secret === parsed.secret && (x.label || '') === label)) { showErr('nAddErr', '这个账号已经在列表里了'); return; }
     const acc = { secret: parsed.secret, label, groupId: $('nAddGroup').value };
+    if ($('nAddEnv').value) acc.env = $('nAddEnv').value;
     if ($('nAddFav').checked) acc.fav = true;
     accounts.push(acc);
     saveBoard();
@@ -953,11 +1070,12 @@
   $('nAddSecret').addEventListener('input', () => {
     // 粘贴 otpauth 链接时自动带出名称
     const p = parseSecretInput($('nAddSecret').value);
-    if (p && p.label && !$('nAddLabel').value.trim()) $('nAddLabel').value = p.label;
+    if (p && p.label && !$('nAddLabel').value.trim()) { $('nAddLabel').value = p.label; autoEnv(); }
   });
 
   $('nBulkOk').onclick = () => {
     const groupId = $('nBulkGroup').value;
+    const bulkEnv = $('nBulkEnv').value;
     let n = 0, bad = 0;
     for (const line of $('nBulk').value.split(/\r?\n/)) {
       if (!line.trim()) continue;
@@ -965,6 +1083,8 @@
       if (!acc) { bad++; continue; }
       if (accounts.some((x) => x.secret === acc.secret && (x.label || '') === acc.label)) continue;
       acc.groupId = groupId;
+      const env = bulkEnv || (looksTest(acc.label) ? 'test' : '');
+      if (env) acc.env = env;
       accounts.push(acc); n++;
     }
     if (!n) { showErr('nBulkErr', bad ? '没有识别到有效账号（' + bad + ' 行无效）' : '没有新账号（可能都已存在）'); return; }
@@ -1004,6 +1124,7 @@
     $('nEditLabel').value = a.label || '';
     $('nEditSecret').value = a.secret || '';
     fillGroups($('nEditGroup'), gid(a));
+    fillEnv($('nEditEnv'), a.env || '');
     $('nEditFav').checked = !!a.fav;
     showErr('nEditErr');
     dlgEdit.showModal();
@@ -1016,6 +1137,7 @@
     editing.secret = parsed.secret;
     editing.label = $('nEditLabel').value.trim() || parsed.label || editing.label || '';
     editing.groupId = $('nEditGroup').value;
+    if ($('nEditEnv').value) editing.env = $('nEditEnv').value; else delete editing.env;
     if ($('nEditFav').checked) editing.fav = true; else delete editing.fav;
     saveBoard();
     dlgEdit.close();
