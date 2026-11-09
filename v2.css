@@ -381,13 +381,19 @@ body.n-grabbing, body.n-grabbing * { cursor: grabbing !important; -webkit-user-s
 }
 
 /* ===== 列表降噪：平时码淡一点，鼠标所在 / 选中的那行才突出；点整行复制 ===== */
-#v2 .n-row { cursor: pointer; -webkit-user-select: none; user-select: none; }
+#v2 .n-row { cursor: pointer; -webkit-user-select: none; user-select: none; min-height: 66px; } /* 固定行高，「下一个」出现/消失时列表不跳动 */
 #v2 .n-row .n-code { font-size: 17px; font-weight: 500; color: var(--n-muted); }
 #v2 .n-row:hover .n-code, #v2 .n-row.active .n-code { font-weight: 700; color: var(--n-text); background: var(--n-accent-soft); }
 #v2 .n-row .n-code:hover { color: var(--n-accent); }
 #v2 .n-app.urgent .n-row:not(:hover):not(.active) .n-code { color: var(--n-muted); }
 #v2 .n-app.urgent .n-row:hover .n-code, #v2 .n-app.urgent .n-row.active .n-code { color: var(--n-warn); }
-#v2 .n-app.soon .n-row:not(:hover):not(.active) .n-next { height: 0; opacity: 0; }
+/* 快到期时，所有行都显示「下一个」验证码，用淡蓝底色 + 蓝字，一眼能看到 */
+#v2 .n-app.soon .n-next {
+  margin-top: 3px; padding: 1px 8px; border-radius: 6px;
+  font-size: 12.5px; font-weight: 600; letter-spacing: .02em;
+  color: var(--n-accent); background: var(--n-accent-soft);
+}
+#v2 .n-app.n-mask .n-row:not(:hover):not(.active) .n-next { filter: blur(6px); }
 #v2 .n-row.n-flash { background: color-mix(in srgb, var(--n-ok) 10%, transparent); }
 #v2 .n-main-head .n-btn { height: 34px; padding: 0 12px; font-size: 12.5px; }
 #v2 .n-main-head .n-btn[aria-pressed="true"] { background: var(--n-accent-soft); color: var(--n-accent); border-color: transparent; }
@@ -397,3 +403,5 @@ body.n-grabbing, body.n-grabbing * { cursor: grabbing !important; -webkit-user-s
 /* 复制后原地提示 */
 #v2 .n-code.copied { font-size: 0 !important; color: var(--n-ok) !important; filter: none !important; background: color-mix(in srgb, var(--n-ok) 12%, transparent) !important; }
 #v2 .n-code.copied::after { content: "已复制 ✓"; font-size: 15px; font-weight: 600; letter-spacing: 0; font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+#v2 .n-count { white-space: nowrap; }
+@media (max-width: 800px) { #v2 #nMask span { display: none; } #v2 #nMask { width: 34px; padding: 0; } }
