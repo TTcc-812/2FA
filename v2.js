@@ -11,7 +11,7 @@
   const K_UI = 'simple2fa.ui';
   const K_PREFS = 'simple2fa.v2prefs';
   const PERIOD = 30;
-  const ENV = { prod: '正式', test: '测试' };
+  const K_ENVS = 'simple2fa.envs';
   // 名称里带这些词的，自动当成测试环境（只是默认值，可以手动改）
   const looksTest = (t) => /测试|沙盒|(^|[^a-z])(test|testing|sandbox)([^a-z]|$)/i.test(t || '');
   const RING = 97.39; // 2π × 15.5
@@ -107,7 +107,6 @@
     accounts = readJSON(K_BOARD, []);
     if (!Array.isArray(accounts)) accounts = [];
     accounts = accounts.filter((a) => a && typeof a.secret === 'string');
-    for (const a of accounts) if (a.env && !ENV[a.env]) delete a.env;
     groups = readJSON(K_GROUPS, []);
     if (!Array.isArray(groups)) groups = [];
     groups = groups.filter((g) => g && typeof g.id === 'string' && typeof g.name === 'string');
@@ -128,6 +127,27 @@
     if (n) writeJSON(K_BOARD, accounts);
     try { localStorage.setItem('simple2fa.envDetectV1', '1'); } catch (_) {}
   }
+  // 环境：可自己新建 / 改名 / 删除，默认有「正式」「测试」
+  let envs = [];
+  function loadEnvs() {
+    const e = readJSON(K_ENVS, null);
+    envs = Array.isArray(e) ? e.filter((x) => x && typeof x.id === 'string' && typeof x.name === 'string')
+      : [{ id: 'prod', name: '正式' }, { id: 'test', name: '测试' }];
+  }
+  loadEnvs();
+  const saveEnvs = () => writeJSON(K_ENVS, envs);
+  const envName = (id) => { const e = envs.find((x) => x.id === id); return e ? e.name : ''; };
+  const envColor = (id) => (id === 'prod' ? 'var(--n-danger)' : id === 'test' ? 'var(--n-ok)' : 'hsl(' + hue(id) + ' 62% 48%)');
+  function makeEnv() {
+    const v = prompt('新环境名称（例如 预发、开发）', '');
+    if (v === null) return null;
+    const name = v.trim();
+    if (!name || envs.some((e) => e.name === name)) { toast('环境名称不能为空或重复', true); return null; }
+    const e = { id: 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name };
+    envs.push(e);
+    saveEnvs();
+    return e;
+  }
   const saveBoard = () => writeJSON(K_BOARD, accounts);
   const saveGroups = () => writeJSON(K_GROUPS, groups);
 
@@ -135,9 +155,11 @@
   let filter = typeof prefs.filter === 'string' ? prefs.filter : 'all';
   let sort = ['custom', 'recent', 'name'].includes(prefs.sort) ? prefs.sort : 'custom';
   let mask = !!prefs.mask;
-  let envFilter = ['all', 'prod', 'test'].includes(prefs.env) ? prefs.env : 'all';
-  const savePrefs = () => writeJSON(K_PREFS, { filter, sort, mask, env: envFilter });
-  const envOk = (a) => envFilter === 'all' || a.env === envFilter;
+  // 每个分组各自记住自己的环境筛选：key 是 'g:分组id'（'g:' 为未分组）或 'fav'
+  let envBy = prefs.envBy && typeof prefs.envBy === 'object' ? prefs.envBy : {};
+  const savePrefs = () => writeJSON(K_PREFS, { filter, sort, mask, envBy });
+  const getEnvF = (key) => { const v = envBy[key]; return v && v !== 'all' && envs.some((e) => e.id === v) ? v : 'all'; };
+  function setEnvF(key, v) { envBy[key] = v; activeIdx = -1; savePrefs(); render(); }
 
   let query = '';
   let visible = [];      // 当前渲染顺序里的账号
@@ -198,6 +220,7 @@
           <button type="button" role="menuitem" data-act="quick">${svg('bolt')}临时出码（不保存）</button>
           <button type="button" role="menuitem" data-act="bulk">${svg('upload')}批量导入</button>
           <button type="button" role="menuitem" data-act="export">${svg('copy')}复制全部书签链接</button>
+          <button type="button" role="menuitem" data-act="envs">${svg('list')}管理环境（新建 / 改名 / 删除）</button>
           <hr>
           <button type="button" role="menuitem" data-act="clear" class="n-menu-danger">${svg('trash')}清空全部账号</button>
         </div>
@@ -224,9 +247,9 @@
           </div>
         </div>
       </div>
-      <div class="n-envbar" id="nEnv" role="tablist" aria-label="环境筛选"></div>
+      <div id="nEnv"></div>
       <div class="n-list" id="nList"></div>
-      <p class="n-tip">快捷键：<kbd>/</kbd> 搜索 · <kbd>↑</kbd><kbd>↓</kbd> 选择 · <kbd>Enter</kbd> 复制验证码 · <kbd>Esc</kbd> 清空搜索。点任意一行即可复制验证码，点 ☆ 收藏到「常用」。按住左侧 ⋮⋮ 拖动调整顺序，拖到左边的分组上可换分组。给账号标上「正式 / 测试」后，用上方的切换条一键筛选；把一行拖到「正式 / 测试」上也能直接标记。</p>
+      <p class="n-tip">快捷键：<kbd>/</kbd> 搜索 · <kbd>↑</kbd><kbd>↓</kbd> 选择 · <kbd>Enter</kbd> 复制验证码 · <kbd>Esc</kbd> 清空搜索。点任意一行即可复制验证码，点 ☆ 收藏到「常用」。按住左侧 ⋮⋮ 拖动调整顺序，拖到左边的分组上可换分组。每个分组右上角都有自己的环境切换条；把一行拖到切换条的某个环境上，就能直接标记。</p>
     </main>
   </div>
 
@@ -307,6 +330,12 @@
     <div class="n-dlg-foot"><button type="button" class="n-btn" id="nQrCopy">复制 otpauth 链接</button><button type="button" class="n-btn n-primary" data-close>关闭</button></div>
   </dialog>
 
+  <dialog class="n-dlg" id="nDlgEnv" aria-labelledby="nEnvTitle" style="width:min(420px,calc(100vw - 24px))">
+    <div class="n-dlg-head"><h3 id="nEnvTitle">管理环境</h3><button type="button" class="n-act" data-close aria-label="关闭">${svg('x')}</button></div>
+    <div class="n-dlg-body"><div id="nEnvList"></div><p class="n-hint" style="margin:10px 0 0">删除环境后，已标记它的账号会变成「不标记」，账号本身不会被删除。</p></div>
+    <div class="n-dlg-foot"><button type="button" class="n-btn" id="nEnvNew">${svg('plus')}新建环境</button><button type="button" class="n-btn n-primary" data-close>完成</button></div>
+  </dialog>
+
   <div class="n-toast" id="nToast" role="status" aria-live="polite"></div>
 </div>`;
 
@@ -380,7 +409,7 @@
     const code = currentCode(a.secret);
     if (!code) { toast(codes.get(a.secret) && codes.get(a.secret).code === null ? '密钥无效，请编辑后重试' : '验证码尚未生成，请稍后重试', true); return; }
     copyText(code).then(() => {
-      toast('已复制「' + (a.label || '未命名') + '」' + (a.env ? '（' + ENV[a.env] + '）' : '') + ' ' + fmt(code));
+      toast('已复制「' + (a.label || '未命名') + '」' + (a.env && envName(a.env) ? '（' + envName(a.env) + '）' : '') + ' ' + fmt(code));
       if (accounts.includes(a)) { a.used = Date.now(); saveBoard(); }
       if (codeEl) {
         const rowEl = codeEl.closest('.n-row');
@@ -420,10 +449,10 @@
   function renderSide() {
     const side = $('nSide');
     side.replaceChildren();
-    const cnt = (fn) => accounts.filter((a) => envOk(a) && fn(a)).length;
+    const cnt = (fn) => accounts.filter(fn).length;
     side.append(
       navBtn('fav', '★', '常用', cnt((a) => a.fav)),
-      navBtn('all', svg('list'), '全部账号', cnt(() => true))
+      navBtn('all', svg('list'), '全部账号', accounts.length)
     );
     const title = el('div', 'n-side-title');
     title.append(el('span', '', '分组'), miniBtn(svg('plus', 14), '新建分组', newGroup));
@@ -503,7 +532,8 @@
     accounts.forEach((a, i) => {
       const name = (a.label || '').toLowerCase();
       const grp = groupName(gid(a)).toLowerCase();
-      const env = a.env ? (ENV[a.env] + ' ' + a.env) : '';
+      const en = a.env ? envName(a.env) : '';
+      const env = en ? en + (a.env === 'prod' || a.env === 'test' ? ' ' + a.env : '') : '';
       let worst = 0;
       for (const t of tokens) {
         const s = name === t ? 0 : name.startsWith(t) ? 1 : name.includes(t) ? 2 : (grp.includes(t) || env.includes(t)) ? 3 : -1;
@@ -561,9 +591,11 @@
     name.title = a.label || '未命名';
     highlight(name, a.label || '未命名', q);
     nameRow.appendChild(name);
-    if (a.env && ENV[a.env]) {
+    if (a.env && envName(a.env)) {
       row.dataset.env = a.env;
-      nameRow.appendChild(el('span', 'n-env n-env-' + a.env, ENV[a.env]));
+      const tag = el('span', 'n-env', envName(a.env));
+      tag.style.setProperty('--ec', envColor(a.env));
+      nameRow.appendChild(tag);
     }
     info.appendChild(nameRow);
     if (showGroup) {
@@ -622,26 +654,25 @@
     return row;
   }
 
-  function setEnv(v) {
-    envFilter = v;
-    activeIdx = -1;
-    savePrefs();
-    render();
-  }
-  function renderEnvBar(scope) {
-    const bar = $('nEnv');
-    bar.replaceChildren();
-    const n = (v) => scope.filter((a) => a.env === v).length;
-    for (const [v, label, count] of [['all', '全部', scope.length], ['prod', '正式', n('prod')], ['test', '测试', n('test')]]) {
-      const b = el('button', 'n-seg' + (envFilter === v ? ' on' : ''));
+  // 某个分组（或「常用」）自己的环境切换条：全部 | 各环境（带数量）
+  function envBar(key, scope, small) {
+    const bar = el('div', 'n-envbar' + (small ? ' n-sm' : ''));
+    bar.setAttribute('role', 'tablist');
+    const cur = getEnvF(key);
+    const add = (v, label, count, color) => {
+      const b = el('button', 'n-seg' + (color ? ' n-seg-env' : '') + (cur === v ? ' on' : ''));
       b.type = 'button';
       b.dataset.env = v;
       b.setAttribute('role', 'tab');
-      b.setAttribute('aria-selected', String(envFilter === v));
+      b.setAttribute('aria-selected', String(cur === v));
+      if (color) b.style.setProperty('--ec', color);
       b.append(label, el('span', 'n-cnt', String(count)));
-      b.onclick = () => setEnv(v);
+      b.onclick = () => setEnvF(key, v);
       bar.appendChild(b);
-    }
+    };
+    add('all', '全部', scope.length);
+    for (const e of envs) add(e.id, e.name, scope.filter((a) => a.env === e.id).length, envColor(e.id));
+    return bar;
   }
 
   function emptyState(title, text, buttons) {
@@ -671,25 +702,32 @@
     canSort = sort === 'custom' && !q;
     list.classList.toggle('n-can-sort', canSort);
 
-    let title, items;
+    const envHost = $('nEnv');
+    envHost.replaceChildren();
+    let title, items, key = null, scope = [], envF = 'all', secs = null;
     if (q) {
       title = '搜索“' + query.trim() + '”';
       items = searchList(tokens);
     } else if (filter === 'all') {
+      // 全部：按分组分段，每段有自己的环境切换条
       title = '全部账号';
-      items = accounts;
-    } else if (filter === 'fav') {
-      title = '常用';
-      items = sortList(accounts.filter((a) => a.fav));
+      secs = [];
+      for (const id of [...groups.map((g) => g.id), '']) {
+        const full = sortList(accounts.filter((a) => gid(a) === id));
+        if (!full.length) continue;
+        const f = getEnvF('g:' + id);
+        secs.push({ id, full, f, rows: f === 'all' ? full : full.filter((a) => a.env === f) });
+      }
+      items = secs.flatMap((x) => x.rows);
     } else {
-      const id = filter.slice(2);
-      title = groupName(id);
-      items = sortList(accounts.filter((a) => gid(a) === id));
+      if (filter === 'fav') { title = '常用'; scope = sortList(accounts.filter((a) => a.fav)); }
+      else { const id = filter.slice(2); title = groupName(id); scope = sortList(accounts.filter((a) => gid(a) === id)); }
+      key = filter;
+      envF = getEnvF(key);
+      items = envF === 'all' ? scope : scope.filter((a) => a.env === envF);
+      envHost.appendChild(envBar(key, scope, false));
     }
-    const scope = items;
-    if (envFilter !== 'all') items = items.filter((a) => a.env === envFilter);
-    renderEnvBar(scope);
-    $('nTitle').textContent = title + (envFilter !== 'all' ? ' · ' + ENV[envFilter] : '');
+    $('nTitle').textContent = title + (key && envF !== 'all' ? ' · ' + envName(envF) : '');
     $('nCount').textContent = items.length + ' 个账号';
 
     if (!accounts.length) {
@@ -698,32 +736,34 @@
         ['批量导入', () => openAdd('bulk')],
         ['临时出码', () => openAdd('quick')],
       ]));
-    } else if (!items.length && envFilter !== 'all' && scope.length) {
-      list.appendChild(emptyState('这里没有「' + ENV[envFilter] + '」账号', '在账号的「编辑」里选择环境，或把一行拖到上面的「' + ENV[envFilter] + '」上，就会出现在这里。', [['查看全部环境', () => setEnv('all')]]));
-    } else if (!items.length) {
-      if (q) list.appendChild(emptyState('没有找到匹配的账号', '试试别的关键词，名称和分组名都能搜。', [['清空搜索', () => { qInput.value = ''; onQuery(); qInput.focus(); }]]));
-      else if (filter === 'fav') list.appendChild(emptyState('还没有常用账号', '点击账号左侧的 ☆，就能把经常用的账号收藏到这里，打开就能找到。', [['查看全部账号', () => setFilter('all')]]));
-      else list.appendChild(emptyState('这个分组还没有账号', '添加账号时选择这个分组，或在账号的「编辑」里把它移过来。', [['添加账号', () => openAdd('one'), true]]));
-    } else if (!q && filter === 'all') {
-      // 全部：按分组分段显示，分组标题可点击直接跳到该分组
-      const sections = [...groups.map((g) => g.id), ''];
-      for (const id of sections) {
-        const sec = sortList(items.filter((a) => gid(a) === id));
-        if (!sec.length) continue;
+    } else if (secs) {
+      for (const sc of secs) {
         const wrap = el('section');
+        const top = el('div', 'n-sec-top');
         const head = el('div', 'n-sec-head');
         const hb = el('button');
         hb.type = 'button';
         hb.title = '只看这个分组';
-        hb.append(dot(id), el('span', '', groupName(id)), el('span', 'n-cnt', String(sec.length)));
-        hb.onclick = () => setFilter('g:' + id);
+        hb.append(dot(sc.id), el('span', '', groupName(sc.id)), el('span', 'n-cnt', String(sc.rows.length)));
+        hb.onclick = () => setFilter('g:' + sc.id);
         head.appendChild(hb);
-        const rows = el('div', 'n-rows');
-        rows.dataset.gid = id;
-        for (const a of sec) rows.appendChild(buildRow(a, false, []));
-        wrap.append(head, rows);
+        top.append(head, envBar('g:' + sc.id, sc.full, true));
+        wrap.appendChild(top);
+        if (sc.rows.length) {
+          const rows = el('div', 'n-rows');
+          rows.dataset.gid = sc.id;
+          for (const a of sc.rows) rows.appendChild(buildRow(a, false, []));
+          wrap.appendChild(rows);
+        } else {
+          wrap.appendChild(el('div', 'n-sec-empty', '这个分组里没有「' + envName(sc.f) + '」账号'));
+        }
         list.appendChild(wrap);
       }
+    } else if (!items.length) {
+      if (key && envF !== 'all' && scope.length) list.appendChild(emptyState('这里没有「' + envName(envF) + '」账号', '在账号的「编辑」里选择环境，或把一行拖到上面的「' + envName(envF) + '」上，就会出现在这里。', [['查看全部', () => setEnvF(key, 'all')]]));
+      else if (q) list.appendChild(emptyState('没有找到匹配的账号', '试试别的关键词，名称、分组名、环境名都能搜。', [['清空搜索', () => { qInput.value = ''; onQuery(); qInput.focus(); }]]));
+      else if (filter === 'fav') list.appendChild(emptyState('还没有常用账号', '点击账号左侧的 ☆，就能把经常用的账号收藏到这里，打开就能找到。', [['查看全部账号', () => setFilter('all')]]));
+      else list.appendChild(emptyState('这个分组还没有账号', '添加账号时选择这个分组，或在账号的「编辑」里把它移过来。', [['添加账号', () => openAdd('one'), true]]));
     } else {
       const rows = el('div', 'n-rows');
       const showGroup = !!q || filter === 'fav';
@@ -857,7 +897,7 @@
         const idx = accounts.indexOf(a);
         if (idx >= 0) {
           if (navF === 'fav') { a.fav = true; msg = '已加入「常用」'; }
-          else if (navF.startsWith('env:')) { a.env = navF.slice(4); msg = '已标记为「' + ENV[a.env] + '」'; }
+          else if (navF.startsWith('env:')) { a.env = navF.slice(4); msg = '已标记为「' + envName(a.env) + '」'; }
           else {
             a.groupId = navF.slice(2);
             accounts.splice(idx, 1);
@@ -933,7 +973,8 @@
     if (!b) return;
     toggleMenu(false);
     const act = b.dataset.act;
-    if (act === 'quick') openAdd('quick');
+    if (act === 'envs') { renderEnvList(); $('nDlgEnv').showModal(); }
+    else if (act === 'quick') openAdd('quick');
     else if (act === 'bulk') openAdd('bulk');
     else if (act === 'export') {
       if (!accounts.length) { toast('还没有账号', true); return; }
@@ -946,6 +987,37 @@
       accounts = []; saveBoard(); render(); toast('已清空');
     }
   };
+  function renderEnvList() {
+    const box = $('nEnvList');
+    box.replaceChildren();
+    if (!envs.length) box.appendChild(el('p', 'n-hint', '还没有环境，点下面的「新建环境」添加。'));
+    for (const e of envs) {
+      const used = accounts.filter((a) => a.env === e.id).length;
+      const row = el('div', 'n-envrow');
+      const tag = el('span', 'n-env', e.name);
+      tag.style.setProperty('--ec', envColor(e.id));
+      const ren = el('button', 'n-btn', '重命名');
+      ren.type = 'button';
+      ren.onclick = () => {
+        const v = prompt('环境名称', e.name);
+        if (v === null) return;
+        const name = v.trim();
+        if (!name || envs.some((x) => x !== e && x.name === name)) { toast('名称无效或重复', true); return; }
+        e.name = name; saveEnvs(); renderEnvList(); render();
+      };
+      const del = el('button', 'n-btn n-danger', '删除');
+      del.type = 'button';
+      del.onclick = () => {
+        if (!confirm('删除环境「' + e.name + '」？已标记它的 ' + used + ' 个账号会变成「不标记」。')) return;
+        accounts.forEach((a) => { if (a.env === e.id) delete a.env; });
+        envs = envs.filter((x) => x !== e);
+        saveEnvs(); saveBoard(); renderEnvList(); render();
+      };
+      row.append(tag, el('span', 'n-cnt n-spacer', used + ' 个账号'), ren, del);
+      box.appendChild(row);
+    }
+  }
+  $('nEnvNew').onclick = () => { const e = makeEnv(); if (e) { renderEnvList(); render(); toast('已创建环境「' + e.name + '」'); } };
   $('nAdd').onclick = () => openAdd('one');
   $('nToOld').onclick = () => {
     try { localStorage.setItem(K_UI, 'v1'); } catch (_) {}
@@ -959,7 +1031,7 @@
     });
   }
   // 单选标签组：点一下就选中，不用展开下拉框。box.value 是当前选中的值。
-  function chipPicker(box, options, value, onNew) {
+  function chipPicker(box, options, value, onNew, newLabel) {
     box.replaceChildren();
     box.value = value;
     const sync = () => {
@@ -971,7 +1043,8 @@
       }
     };
     for (const o of options) {
-      const b = el('button', 'n-chip' + (o.cls ? ' ' + o.cls : ''));
+      const b = el('button', 'n-chip' + (o.color ? ' n-chip-env' : ''));
+      if (o.color) b.style.setProperty('--ec', o.color);
       b.type = 'button';
       b.setAttribute('role', 'radio');
       b.dataset.v = o.v;
@@ -981,7 +1054,7 @@
       box.appendChild(b);
     }
     if (onNew) {
-      const add = el('button', 'n-chip n-chip-new', '＋ 新建分组');
+      const add = el('button', 'n-chip n-chip-new', newLabel || '＋ 新建分组');
       add.type = 'button';
       add.onclick = onNew;
       box.appendChild(add);
@@ -999,12 +1072,22 @@
       toast('已创建分组「' + g.name + '」');
     });
   }
+  const ENV_BOXES = ['nAddEnv', 'nBulkEnv', 'nEditEnv'];
   function fillEnv(box, selected) {
-    chipPicker(box, [
-      { v: '', label: '不标记' },
-      { v: 'prod', label: '正式', cls: 'n-chip-prod' },
-      { v: 'test', label: '测试', cls: 'n-chip-test' },
-    ], selected || '');
+    const cur = envs.some((e) => e.id === selected) ? selected : '';
+    chipPicker(box, [{ v: '', label: '不标记' }, ...envs.map((e) => ({ v: e.id, label: e.name, color: envColor(e.id) }))], cur, () => {
+      const e = makeEnv();
+      if (!e) return;
+      for (const id of ENV_BOXES) { const b = $(id); fillEnv(b, b === box ? e.id : b.value); }
+      if (box.id === 'nAddEnv') envTouched = true;
+      render();
+      toast('已创建环境「' + e.name + '」');
+    }, '＋ 新建环境');
+  }
+  // 新增账号时的默认环境：在某个分组里、且该分组正筛选着某个环境，就默认选它
+  function defaultEnv() {
+    const v = !query.trim() && filter !== 'all' ? getEnvF(filter) : 'all';
+    return v === 'all' ? '' : v;
   }
   const currentGroupId = () => (filter.startsWith('g:') && !query.trim() ? filter.slice(2) : '');
 
@@ -1026,7 +1109,7 @@
   $('nAddEnv').onpick = () => { envTouched = true; };
   function autoEnv() {
     if (envTouched) return;
-    fillEnv($('nAddEnv'), looksTest($('nAddLabel').value) ? 'test' : (envFilter === 'all' ? '' : envFilter));
+    fillEnv($('nAddEnv'), looksTest($('nAddLabel').value) && envs.some((e) => e.id === 'test') ? 'test' : defaultEnv());
   }
   $('nAddLabel').addEventListener('input', autoEnv);
   function openAdd(tab, preset) {
@@ -1034,8 +1117,8 @@
     fillGroups($('nAddGroup'), g);
     fillGroups($('nBulkGroup'), g);
     envTouched = false;
-    fillEnv($('nAddEnv'), envFilter === 'all' ? '' : envFilter);
-    fillEnv($('nBulkEnv'), envFilter === 'all' ? '' : envFilter);
+    fillEnv($('nAddEnv'), defaultEnv());
+    fillEnv($('nBulkEnv'), defaultEnv());
     $('nAddFav').checked = filter === 'fav' && !query.trim();
     showErr('nAddErr'); showErr('nBulkErr'); showErr('nQuickErr');
     if (preset) { $('nAddLabel').value = preset.label || ''; $('nAddSecret').value = preset.secret || ''; autoEnv(); }
@@ -1083,7 +1166,7 @@
       if (!acc) { bad++; continue; }
       if (accounts.some((x) => x.secret === acc.secret && (x.label || '') === acc.label)) continue;
       acc.groupId = groupId;
-      const env = bulkEnv || (looksTest(acc.label) ? 'test' : '');
+      const env = bulkEnv || (looksTest(acc.label) && envs.some((e) => e.id === 'test') ? 'test' : '');
       if (env) acc.env = env;
       accounts.push(acc); n++;
     }
@@ -1187,7 +1270,7 @@
 
   // 其他标签页（包括旧版）改了数据时同步过来
   window.addEventListener('storage', (e) => {
-    if (!dragging && (e.key === K_BOARD || e.key === K_GROUPS)) { loadData(); render(); }
+    if (!dragging && (e.key === K_BOARD || e.key === K_GROUPS || e.key === K_ENVS)) { loadData(); loadEnvs(); render(); }
   });
 
   render();
