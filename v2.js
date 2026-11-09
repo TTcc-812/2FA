@@ -906,6 +906,8 @@
 
   render();
   tick();
+  // 电脑上打开即聚焦搜索框：直接打字 + Enter 就能复制（手机不自动聚焦，避免弹出键盘）
+  if (!location.hash && window.matchMedia('(hover: hover) and (pointer: fine)').matches) qInput.focus();
 
   // 兼容旧版书签链接：#secret=xxx&label=yyy 打开即出码
   (function loadHash() {
