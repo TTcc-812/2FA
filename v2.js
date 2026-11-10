@@ -1054,6 +1054,23 @@
     for (const e of list) {
       const used = accounts.filter((a) => gid(a) === envMgrGid && a.env === e.id).length;
       const row = el('div', 'n-envrow');
+      row.dataset.id = e.id;
+      const grip = el('button', 'n-grip');
+      grip.type = 'button';
+      grip.title = '按住拖动排序（也可聚焦后按 ↑ ↓）';
+      grip.setAttribute('aria-label', '拖动排序');
+      grip.innerHTML = svg('grip', 16);
+      grip.addEventListener('pointerdown', (ev) => startEnvDrag(ev, row, box));
+      grip.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return;
+        ev.preventDefault();
+        const sib = ev.key === 'ArrowUp' ? row.previousElementSibling : row.nextElementSibling;
+        if (!sib || !sib.classList.contains('n-envrow')) return;
+        if (ev.key === 'ArrowUp') box.insertBefore(row, sib); else box.insertBefore(sib, row);
+        commitEnvOrder(box);
+        const again = $('nEnvList').querySelector('.n-envrow[data-id="' + e.id + '"] .n-grip');
+        if (again) again.focus();
+      });
       const tag = el('span', 'n-env', e.name);
       tag.style.setProperty('--ec', envColor(e.id));
       const ren = el('button', 'n-btn', '重命名');
@@ -1074,9 +1091,46 @@
         envsBy[envMgrGid || ''] = ensureEnvs(envMgrGid).filter((x) => x.id !== e.id);
         saveEnvs(); saveBoard(); renderEnvList(); render();
       };
-      row.append(tag, el('span', 'n-cnt n-spacer', used + ' 个账号'), ren, del);
+      row.append(grip, tag, el('span', 'n-cnt n-spacer', used + ' 个账号'), ren, del);
       box.appendChild(row);
     }
+  }
+  // 按当前 DOM 顺序保存这个分组的环境顺序
+  function commitEnvOrder(box) {
+    const cur = ensureEnvs(envMgrGid);
+    const order = [...box.querySelectorAll('.n-envrow')].map((r) => cur.find((x) => x.id === r.dataset.id)).filter(Boolean);
+    if (order.length !== cur.length) return;
+    envsBy[envMgrGid || ''] = order;
+    saveEnvs();
+    renderEnvList();
+    render();
+  }
+  // 在管理对话框里拖动 ⋮⋮ 调整环境顺序（鼠标、触屏都可用）
+  function startEnvDrag(ev, row, box) {
+    if (ev.button !== undefined && ev.button !== 0) return;
+    ev.preventDefault();
+    row.classList.add('n-envrow-drag');
+    const move = (e) => {
+      for (const r of box.querySelectorAll('.n-envrow')) {
+        if (r === row) continue;
+        const b = r.getBoundingClientRect();
+        if (e.clientY < b.top || e.clientY > b.bottom) continue;
+        const before = e.clientY < b.top + b.height / 2;
+        if (before && r.previousElementSibling !== row) box.insertBefore(row, r);
+        else if (!before && r.nextElementSibling !== row) box.insertBefore(row, r.nextElementSibling);
+        break;
+      }
+    };
+    const end = () => {
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', end);
+      document.removeEventListener('pointercancel', end);
+      row.classList.remove('n-envrow-drag');
+      commitEnvOrder(box);
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', end);
+    document.addEventListener('pointercancel', end);
   }
   $('nEnvNew').onclick = () => { const e = makeEnv(envMgrGid); if (e) { renderEnvList(); render(); toast('已创建环境「' + e.name + '」'); } };
   $('nAdd').onclick = () => openAdd('one');
