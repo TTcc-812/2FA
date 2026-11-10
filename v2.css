@@ -445,3 +445,6 @@ body.n-grabbing, body.n-grabbing * { cursor: grabbing !important; -webkit-user-s
 
 #v2 .n-seg-tool { color: var(--n-faint); font-weight: 500; padding: 0 8px; }
 #v2 .n-seg-tool:hover { color: var(--n-accent, #2563eb); }
+
+#v2 .n-envrow .n-grip { display: grid; height: 30px; }
+#v2 .n-envrow-drag { background: var(--n-hover, rgba(37, 99, 235, .08)); border-radius: 8px; box-shadow: 0 2px 10px rgba(0, 0, 0, .12); }
